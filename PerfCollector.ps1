@@ -231,7 +231,7 @@ Function GiveMeConnectionSource()
     {
       logMsg( "Connecting to the database...Attempt #" + $i) (1)
       $SQLConnection = New-Object System.Data.SqlClient.SqlConnection 
-      $SQLConnection.ConnectionString = "Server="+$server+";Database="+$Db+";User ID="+$user+";Password="+$password+";Connection Timeout=60" 
+      $SQLConnection.ConnectionString = "Server="+$server+";Database="+$Db+";User ID="+$user+";Password="+$password+";Connection Timeout=60;Application Name=PerfCollector" 
       $SQLConnection.Open()
       logMsg("Connected to the database...") (1)
       return $SQLConnection
