@@ -14,6 +14,7 @@ Performance Collector Checker. This Powershell script has been designed with a m
 - **Check if MAXDOP is 0** 
 
 - **Check if we have an index with more than 50% fragmented** 
+- **Check if we have missing indexes** 
 
 Basically we need to configure the parameters:
 
