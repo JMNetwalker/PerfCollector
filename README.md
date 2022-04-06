@@ -1,5 +1,6 @@
 # PerfCollector
 Performance Collector Checker. This Powershell script has been designed with a main idea check the main topics that could impact in your database performance.
+[Additional Information](https://techcommunity.microsoft.com/t5/azure-database-support-blog/bg-p/AzureDBSupport)
 
 - **Check if the statistics** 
   + If number of rows in the statistics is different of rows_sampled.
