@@ -15,6 +15,7 @@ Performance Collector Checker. This Powershell script has been designed with a m
 
 - **Check if we have an index with more than 50% fragmented** 
 - **Check if we have missing indexes** 
+- **Check if we have command execution timeout** 
 
 Basically we need to configure the parameters:
 
