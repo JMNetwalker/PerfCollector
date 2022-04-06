@@ -12,6 +12,7 @@
 #    4) Check if MAXDOP is 0
 #    5) Check if we have an index with more than 50% fragmented
 #    6) Check if we have missing indexes (SQL Server Instance)
+#    7) Check TSQL command execution timeouts using querying QDS
 # Outcomes: 
 #    In the folder specified in $Folder variable we are going to have a file called PerfChecker.Log that contains all the operations done 
 #    and issues found.
@@ -103,6 +104,54 @@ function CheckTunningRecomendations($connection)
   catch
    {
     logMsg("Not able to run tuning recomendations..." + $Error[0].Exception) (2)
+   } 
+
+}
+
+#-------------------------------------------------------------------------------
+# Check if you have any query that gave a command execution timeout.
+#-------------------------------------------------------------------------------
+
+function CheckCommandTimeout($connection)
+{
+ try
+ {
+   logMsg( "---- Checking Command Timeout Execution (Started) ---- " ) (1)
+   $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
+   $command.CommandTimeout = 6000
+   $command.Connection=$connection
+   $command.CommandText = "SELECT
+                           qst.query_sql_text,
+                           qrs.execution_type,
+                           qrs.execution_type_desc,
+                           qpx.query_plan_xml,
+                           qrs.count_executions,
+                           qrs.last_execution_time
+                           FROM sys.query_store_query AS qsq
+                           JOIN sys.query_store_plan AS qsp on qsq.query_id=qsp.query_id
+                           JOIN sys.query_store_query_text AS qst on qsq.query_text_id=qst.query_text_id
+                           OUTER APPLY (SELECT TRY_CONVERT(XML, qsp.query_plan) AS query_plan_xml) AS qpx
+                           JOIN sys.query_store_runtime_stats qrs on qsp.plan_id = qrs.plan_id
+                           WHERE qrs.execution_type =3
+                           ORDER BY qrs.last_execution_time DESC;"
+      
+   $Reader = $command.ExecuteReader(); 
+   while($Reader.Read())
+   {
+       logMsg("----- Please, review the following command timeout execution --------------- " ) (2)
+       logMsg("----- Execution Type     : " + $Reader.GetValue(1).ToString() + "-" + $Reader.GetValue(2).ToString()) (2)
+       logMsg("----- Execution Count    : " + $Reader.GetValue(4).ToString() + "- Last Execution Time: " + $Reader.GetValue(5).ToString()) (2)
+       logMsg("----- TSQL               : " + $Reader.GetValue(0).ToString() ) (2)
+       logMsg("----- Execution Plan XML : " + $Reader.GetValue(3).ToString() ) (2)
+       logMsg("-----------------------------------------------------------------------------" ) (2)
+   }
+
+   $Reader.Close();
+   logMsg( "---- Checking Command Timeout Execution (Finished) ---- " ) (1)
+  }
+  catch
+   {
+    logMsg("Not able to run Command Timeout Execution..." + $Error[0].Exception) (2)
    } 
 
 }
@@ -570,14 +619,14 @@ logMsg("Deleted Log") (1)
      exit;
     }
 
+ CheckCommandTimeout($SQLConnectionSource)
  CheckMissingIndexes($SQLConnectionSource)
  CheckStatistics( $SQLConnectionSource)
  CheckIndexesAndStatistics( $SQLConnectionSource)
  CheckScopeConfiguration( $SQLConnectionSource)
  CheckTunningRecomendations($SQLConnectionSource)
  CheckFragmentationIndexes($SQLConnectionSource)
-
-
+ 
  
  logMsg("Closing the connection..") (1)
  $SQLConnectionSource.Close() 
