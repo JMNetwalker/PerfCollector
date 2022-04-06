@@ -21,11 +21,11 @@
 #----------------------------------------------------------------
 #Parameters 
 #----------------------------------------------------------------
-param($server = "", #ServerName parameter to connect 
+param($server = "", #ServerName parameter to connect,for example, myserver.database.windows.net
       $user = "", #UserName parameter  to connect
       $passwordSecure = "", #Password Parameter  to connect
       $Db = "", #DBName Parameter  to connect
-      $Folder = "C:\PerfChecker") #Folder Paramater to save the log and solution files 
+      $Folder = "") #Folder Parameter to save the log and solution files, for example, c:\PerfChecker
 
 
 #-------------------------------------------------------------------------------
@@ -84,7 +84,7 @@ function CheckTunningRecomendations($connection)
 {
  try
  {
-   logMsg( "---- Checking Tuning Recomendations (Started) ---- " ) (1)
+   logMsg( "---- Checking Tuning Recomendations (Started) Ref: https://docs.microsoft.com/en-us/azure/azure-sql/database/automatic-tuning-overview ---- " ) (1)
    $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
    $command.CommandTimeout = 60
    $command.Connection=$connection
@@ -116,7 +116,7 @@ function CheckCommandTimeout($connection)
 {
  try
  {
-   logMsg( "---- Checking Command Timeout Execution (Started) ---- " ) (1)
+   logMsg( "---- Checking Command Timeout Execution (Started) Ref: https://docs.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-query-store-runtime-stats-transact-sql?view=sql-server-ver15---- " ) (1)
    $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
    $command.CommandTimeout = 6000
    $command.Connection=$connection
@@ -160,7 +160,7 @@ function CheckMissingIndexes($connection)
 {
  try
  {
-   logMsg( "---- Checking Missing Indexes (Started) ---- " ) (1)
+   logMsg( "---- Checking Missing Indexes (Started) Ref: https://docs.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-db-missing-index-groups-transact-sql?view=sql-server-ver15 ---- " ) (1)
    $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
    $command.CommandTimeout = 60
    $command.Connection=$connection
@@ -288,7 +288,7 @@ function CheckScopeConfiguration($connection)
 {
  try
  {
-   logMsg( "---- Checking Scoped Configurations ---- " ) (1)
+   logMsg( "---- Checking Scoped Configurations ---- Ref: https://docs.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-database-scoped-configurations-transact-sql?view=sql-server-ver15" ) (1)
    $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
    $command.CommandTimeout = 60
    $command.Connection=$connection
@@ -322,7 +322,7 @@ function CheckFragmentationIndexes($connection)
 {
  try
  {
-   logMsg( "---- Checking Index Fragmentation (Note: This process may take some time and resource).---- " ) (1)
+   logMsg( "---- Checking Index Fragmentation (Note: This process may take some time and resource) - Ref: https://docs.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-db-index-physical-stats-transact-sql?view=sql-server-ver15 ---- " ) (1)
    $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
    $command.CommandTimeout = 6000
    $command.Connection=$connection
@@ -575,7 +575,7 @@ if (TestEmpty($passwordSecure))
 else
     {$password = $passwordSecure} 
 if (TestEmpty($Db))  { $Db = read-host -Prompt "Please enter a Database Name"  }
-if (TestEmpty($Folder)) {  $Folder = read-host -Prompt "Please enter a Destination Folder (Don't include the past \) - Example c:\QdsExport" }
+if (TestEmpty($Folder)) {  $Folder = read-host -Prompt "Please enter a Destination Folder (Don't include the last \) - Example c:\PerfChecker" }
 
 Function Remove-InvalidFileNameChars {
 
