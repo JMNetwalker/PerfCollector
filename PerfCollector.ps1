@@ -25,7 +25,7 @@ param($server = "", #ServerName parameter to connect,for example, myserver.datab
       $user = "", #UserName parameter  to connect
       $passwordSecure = "", #Password Parameter  to connect
       $Db = "", #DBName Parameter  to connect
-      $Folder = "") #Folder Parameter to save the log and solution files, for example, c:\PerfChecker
+      $Folder = "c:\PerfChecker") #Folder Parameter to save the log and solution files, for example, c:\PerfChecker
 
 
 #-------------------------------------------------------------------------------
@@ -37,6 +37,7 @@ function CheckStatistics($connection)
 {
  try
  {
+   $Item=0
    logMsg( "---- Checking Statistics health (Started) (REF: https://docs.microsoft.com/en-us/sql/t-sql/statements/update-statistics-transact-sql?view=sql-server-ver15)---- " ) (1)
    $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
    $command.CommandTimeout = 60
@@ -51,6 +52,7 @@ function CheckStatistics($connection)
    {
      if( $Reader.GetValue(5) -gt $Reader.GetValue(6)) #If number rows is different rows_sampled
      {
+       $Item=$Item+1
        logMsg("Table/statistics: " + $Reader.GetValue(11).ToString() +"."+ $Reader.GetValue(2).ToString() + "/" + $Reader.GetValue(1).ToString() + " possible outdated (Rows_Sampled is less than rows of the table)") (2)
        logSolution("UPDATE STATISTICS [" + $Reader.GetValue(11).ToString() +"].["+ $Reader.GetValue(2).ToString() + "]([" + $Reader.GetValue(1).ToString() + "]) WITH FULLSCAN")
      }
@@ -59,6 +61,7 @@ function CheckStatistics($connection)
      {
       if($Reader.GetValue(10) -gt 15) #if we have more than 15 days since the lastest update.
       {
+       $Item=$Item+1
        logMsg("Table/statistics: " + $Reader.GetValue(11).ToString() +"."+ $Reader.GetValue(2).ToString() + "/" + $Reader.GetValue(1).ToString() + " possible outdated (15 days since the latest update).") (2)
        logSolution("UPDATE STATISTICS [" + $Reader.GetValue(11).ToString() +"].["+ $Reader.GetValue(2).ToString() + "]([" + $Reader.GetValue(1).ToString() + "]) WITH FULLSCAN")
       }
@@ -67,10 +70,12 @@ function CheckStatistics($connection)
 
    $Reader.Close();
    logMsg( "---- Checking Statistics health (Finished) ---- " ) (1)
+   return $Item
   }
   catch
    {
     logMsg("Not able to run statistics health checker..." + $Error[0].Exception) (2)
+    return 0
    } 
 
 }
@@ -84,6 +89,7 @@ function CheckTunningRecomendations($connection)
 {
  try
  {
+   $Item=0
    logMsg( "---- Checking Tuning Recomendations (Started) Ref: https://docs.microsoft.com/en-us/azure/azure-sql/database/automatic-tuning-overview ---- " ) (1)
    $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
    $command.CommandTimeout = 60
@@ -94,16 +100,19 @@ function CheckTunningRecomendations($connection)
    {
      if( $Reader.GetValue(0) -gt 0) 
      {
+       $Item=$Item+1
        logMsg("----- Please, review tuning recomendations in the portal" ) (2)
      }
    }
 
    $Reader.Close();
    logMsg( "---- Checking tuning recomendations (Finished) ---- " ) (1)
+   return $Item
   }
   catch
    {
     logMsg("Not able to run tuning recomendations..." + $Error[0].Exception) (2)
+    return 0
    } 
 
 }
@@ -116,6 +125,7 @@ function CheckCommandTimeout($connection)
 {
  try
  {
+   $Item=0
    logMsg( "---- Checking Command Timeout Execution (Started) Ref: https://docs.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-query-store-runtime-stats-transact-sql?view=sql-server-ver15---- " ) (1)
    $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
    $command.CommandTimeout = 6000
@@ -138,20 +148,23 @@ function CheckCommandTimeout($connection)
    $Reader = $command.ExecuteReader(); 
    while($Reader.Read())
    {
+       $Item=$Item+1
        logMsg("----- Please, review the following command timeout execution --------------- " ) (2)
        logMsg("----- Execution Type     : " + $Reader.GetValue(1).ToString() + "-" + $Reader.GetValue(2).ToString()) (2)
        logMsg("----- Execution Count    : " + $Reader.GetValue(4).ToString() + "- Last Execution Time: " + $Reader.GetValue(5).ToString()) (2)
        logMsg("----- TSQL               : " + $Reader.GetValue(0).ToString() ) (2)
-       logMsg("----- Execution Plan XML : " + $Reader.GetValue(3).ToString() ) (2)
+       logMsg("----- Execution Plan XML : " + $Reader.GetValue(3).ToString() ) (2) $false
        logMsg("-----------------------------------------------------------------------------" ) (2)
    }
 
    $Reader.Close();
    logMsg( "---- Checking Command Timeout Execution (Finished) ---- " ) (1)
+   return $Item
   }
   catch
    {
     logMsg("Not able to run Command Timeout Execution..." + $Error[0].Exception) (2)
+    return 0
    } 
 
 }
@@ -160,6 +173,7 @@ function CheckMissingIndexes($connection)
 {
  try
  {
+   $Item=0
    logMsg( "---- Checking Missing Indexes (Started) Ref: https://docs.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-db-missing-index-groups-transact-sql?view=sql-server-ver15 ---- " ) (1)
    $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
    $command.CommandTimeout = 60
@@ -218,14 +232,17 @@ function CheckMissingIndexes($connection)
      for ($iColumn=0; $iColumn -lt $Content.Count; $iColumn++) 
      {
       logMsg( $Content[$iColumn]) (1)
+      $Item=$Item+1
      }
    }
    $Reader.Close();
    logMsg( "---- Checking missing indexes (Finished) ---- " ) (1)
+   return $Item
   }
   catch
    {
     logMsg("Not able to run missing indexes..." + $Error[0].Exception) (2)
+    return 0
    } 
 
 }
@@ -237,10 +254,11 @@ function CheckMissingIndexes($connection)
 # 2.- Review if we have more than 15 days that the statistics have been updated.
 #-------------------------------------------------------------------------------
 
-function CheckIndexesAndStatistics($connection)
+function CheckIndexesAndStatistics($connection )
 {
  try
  {
+   $Item=0
    logMsg( "---- Checking Indexes and Statistics health (Started) - Reference: https://docs.microsoft.com/en-us/sql/t-sql/statements/update-statistics-transact-sql?view=sql-server-ver15 -" ) (1)
    $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
    $command.CommandTimeout = 60
@@ -256,6 +274,7 @@ function CheckIndexesAndStatistics($connection)
    {
      if( $Reader.GetValue(5) -gt $Reader.GetValue(6)) #If number rows is different rows_sampled
      {
+       $Item=$Item+1
        logMsg("Table/Index: " + $Reader.GetValue(11).ToString() +"."+ $Reader.GetValue(2).ToString() + "/" + $Reader.GetValue(1).ToString() + " possible outdated - (Rows_Sampled is less than rows of the table)" ) (2)
        logSolution("ALTER INDEX [" + $Reader.GetValue(1).ToString() + "] ON [" + $Reader.GetValue(11).ToString() +"].["+ $Reader.GetValue(2).ToString() + "] REBUILD")
      }
@@ -264,6 +283,7 @@ function CheckIndexesAndStatistics($connection)
      {
       if($Reader.GetValue(10) -gt 15)
       {
+       $Item=$Item+1
        logMsg("Table/Index: " + $Reader.GetValue(11).ToString() +"."+ $Reader.GetValue(2).ToString() + "/" + $Reader.GetValue(1).ToString() + " possible outdated - (15 days since the latest update)" ) (2)
        logSolution("ALTER INDEX [" + $Reader.GetValue(1).ToString() + "] ON [" + $Reader.GetValue(11).ToString() +"].["+ $Reader.GetValue(2).ToString() + "] REBUILD")
       }
@@ -272,10 +292,12 @@ function CheckIndexesAndStatistics($connection)
 
    $Reader.Close();
    logMsg( "---- Checking Indexes and Statistics health (Finished) ---- " ) (1)
+   return $Item
   }
   catch
    {
     logMsg("Not able to run Indexes and statistics health checker..." + $Error[0].Exception) (2)
+    return 0
    } 
 
 }
@@ -288,6 +310,7 @@ function CheckScopeConfiguration($connection)
 {
  try
  {
+   $Item=0
    logMsg( "---- Checking Scoped Configurations ---- Ref: https://docs.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-database-scoped-configurations-transact-sql?view=sql-server-ver15" ) (1)
    $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
    $command.CommandTimeout = 60
@@ -301,15 +324,18 @@ function CheckScopeConfiguration($connection)
       if( $Reader.GetValue(2) -eq 0)
       {
        logMsg("You have MAXDOP with value 0" ) (2)
+       $Item=$Item+1
       }
      }
    }
    $Reader.Close();
    logMsg( "---- Checking Scoped Configurations (Finished) ---- " ) (1)
+   return $Item
   }
   catch
    {
     logMsg("Not able to run Scoped Configurations..." + $Error[0].Exception) (2)
+    return 0 
    } 
 
 }
@@ -322,6 +348,7 @@ function CheckFragmentationIndexes($connection)
 {
  try
  {
+   $Item=0
    logMsg( "---- Checking Index Fragmentation (Note: This process may take some time and resource) - Ref: https://docs.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-db-index-physical-stats-transact-sql?view=sql-server-ver15 ---- " ) (1)
    $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
    $command.CommandTimeout = 6000
@@ -343,15 +370,18 @@ function CheckFragmentationIndexes($connection)
    {
      if( $Reader.GetValue(3) -gt 50) #If fragmentation is greater than 50
      {
+       $Item=$Item+1
        logMsg("Table/Index: " + $Reader.GetValue(1).ToString() +"."+ $Reader.GetValue(2).ToString() + "/" + $Reader.GetValue(3).ToString() + " high fragmentation" ) (2)
      }
    }
    $Reader.Close();
    logMsg( "---- Checking Index Fragmentation (Finished) ---- " ) (1)
+   return $Item
   }
   catch
    {
     logMsg("Not able to run Index Fragmentation..." + $Error[0].Exception) (2)
+    return 0
    } 
 
 }
@@ -360,17 +390,17 @@ function CheckFragmentationIndexes($connection)
 #Function to connect to the database using a retry-logic
 #----------------------------------------------------------------
 
-Function GiveMeConnectionSource()
+Function GiveMeConnectionSource($DBs)
 { 
   for ($i=1; $i -lt 10; $i++)
   {
    try
     {
-      logMsg( "Connecting to the database...Attempt #" + $i) (1)
+      logMsg( "Connecting to the database..." + $DBs + ". Attempt #" + $i) (1)
       $SQLConnection = New-Object System.Data.SqlClient.SqlConnection 
-      $SQLConnection.ConnectionString = "Server="+$server+";Database="+$Db+";User ID="+$user+";Password="+$password+";Connection Timeout=60;Application Name=PerfCollector" 
+      $SQLConnection.ConnectionString = "Server="+$server+";Database="+$Dbs+";User ID="+$user+";Password="+$password+";Connection Timeout=60;Application Name=PerfCollector" 
       $SQLConnection.Open()
-      logMsg("Connected to the database...") (1)
+      logMsg("Connected to the database.." + $DBs) (1)
       return $SQLConnection
       break;
     }
@@ -438,7 +468,9 @@ function logMsg
          [Parameter(Mandatory=$true, Position=0)]
          [string] $msg,
          [Parameter(Mandatory=$false, Position=1)]
-         [int] $Color
+         [int] $Color,
+         [Parameter(Mandatory=$false, Position=2)]
+         [boolean] $Show=$true 
     )
   try
    {
@@ -456,13 +488,16 @@ function logMsg
       $Colores ="Yellow"
      }
 
-     if($Color -eq 2)
+     if($Color -eq 2 -And $Show -eq $true)
       {
         Write-Host -ForegroundColor White -BackgroundColor Red $msg 
       } 
      else 
       {
+       if($Show -eq $true)
+       {
         Write-Host -ForegroundColor $Colores $msg 
+       }
       } 
 
 
@@ -557,6 +592,17 @@ Param([Parameter(Mandatory=$true)]
   }
 }
 
+Function Remove-InvalidFileNameChars {
+
+param([Parameter(Mandatory=$true,
+    Position=0,
+    ValueFromPipeline=$true,
+    ValueFromPipelineByPropertyName=$true)]
+    [String]$Name
+)
+
+return [RegEx]::Replace($Name, "[{0}]" -f ([RegEx]::Escape([String][System.IO.Path]::GetInvalidFileNameChars())), '')}
+
 try
 {
 Clear
@@ -574,19 +620,30 @@ if (TestEmpty($passwordSecure))
     }
 else
     {$password = $passwordSecure} 
-if (TestEmpty($Db))  { $Db = read-host -Prompt "Please enter a Database Name"  }
+if (TestEmpty($Db))  { $Db = read-host -Prompt "Please enter a Database Name, type ALL to check all databases"  }
 if (TestEmpty($Folder)) {  $Folder = read-host -Prompt "Please enter a Destination Folder (Don't include the last \) - Example c:\PerfChecker" }
 
-Function Remove-InvalidFileNameChars {
+$DbsArray = [System.Collections.ArrayList]::new() 
 
-param([Parameter(Mandatory=$true,
-    Position=0,
-    ValueFromPipeline=$true,
-    ValueFromPipelineByPropertyName=$true)]
-    [String]$Name
-)
 
-return [RegEx]::Replace($Name, "[{0}]" -f ([RegEx]::Escape([String][System.IO.Path]::GetInvalidFileNameChars())), '')}
+#--------------------------------
+#Variables
+#--------------------------------
+ $CheckStatistics=0
+ $CheckIndexesAndStatistics=0
+ $CheckMissingIndexes=0
+ $CheckScopeConfiguration=0
+ $CheckTunningRecomendations=0
+ $CheckFragmentationIndexes=0
+ $CheckCommandTimeout=0
+
+ $TotalCheckStatistics=0
+ $TotalCheckIndexesAndStatistics=0
+ $TotalCheckMissingIndexes=0
+ $TotalCheckScopeConfiguration=0
+ $TotalCheckTunningRecomendations=0
+ $TotalCheckFragmentationIndexes=0
+ $TotalCheckCommandTimeout=0
 
 #--------------------------------
 #Run the process
@@ -612,26 +669,92 @@ logMsg("Deleting Log") (1)
    $result = DeleteFile($LogFileSolution) #Delete Log file
 logMsg("Deleted Log") (1)
 
-   $SQLConnectionSource = GiveMeConnectionSource #Connecting to the database.
+if($Db -eq "ALL")
+{
+
+   $SQLConnectionSource = GiveMeConnectionSource "master" #Connecting to the database.
    if($SQLConnectionSource -eq $null)
     { 
      logMsg("It is not possible to connect to the database") (2)
      exit;
     }
+   $commandDB = New-Object -TypeName System.Data.SqlClient.SqlCommand
+   $commandDB.CommandTimeout = 6000
+   $commandDB.Connection=$SQLConnectionSource
+   $commandDB.CommandText = "SELECT name from sys.databases where name <> 'master' order by name"
+      
+   $ReaderDB = $commandDB.ExecuteReader(); 
+   while($ReaderDB.Read())
+   {
+      $DbsArray.Add($ReaderDB.GetValue(0).ToString())
+   }
 
- CheckCommandTimeout($SQLConnectionSource)
- CheckMissingIndexes($SQLConnectionSource)
- CheckStatistics( $SQLConnectionSource)
- CheckIndexesAndStatistics( $SQLConnectionSource)
- CheckScopeConfiguration( $SQLConnectionSource)
- CheckTunningRecomendations($SQLConnectionSource)
- CheckFragmentationIndexes($SQLConnectionSource)
+   $ReaderDB.Close();
+   $SQLConnectionSource.Close() 
+}
+else
+{
+  $DbsArray.Add($DB)
+}
+
+ for($iDBs=0;$iDBs -lt $DbsArray.Count; $iDBs=$iDBs+1)
+ {
+   logMsg("Connecting to database.." + $DbsArray[$iDBs]) (1) 
+   $SQLConnectionSource = GiveMeConnectionSource($DbsArray[$iDBs]) #Connecting to the database.
+   if($SQLConnectionSource -eq $null)
+    { 
+     logMsg("It is not possible to connect to the database " + $DbsArray[$iDBs] ) (2)
+     exit;
+    }
+
+     logMsg("Connected to database.." + $DbsArray[$iDBs]) (1) 
+
+     $CheckStatistics=0
+     $CheckIndexesAndStatistics=0
+     $CheckMissingIndexes=0
+     $CheckScopeConfiguration=0
+     $CheckTunningRecomendations=0
+     $CheckFragmentationIndexes=0
+     $CheckCommandTimeout=0
+
+     $CheckStatistics = CheckStatistics($SQLConnectionSource)
+     $CheckIndexesAndStatistics = CheckIndexesAndStatistics($SQLConnectionSource)
+     $CheckMissingIndexes = CheckMissingIndexes($SQLConnectionSource)
+     $CheckScopeConfiguration = CheckScopeConfiguration( $SQLConnectionSource)
+     $CheckTunningRecomendations = CheckTunningRecomendations($SQLConnectionSource)
+     $CheckFragmentationIndexes = CheckFragmentationIndexes($SQLConnectionSource)
+     $CheckCommandTimeout = CheckCommandTimeout($SQLConnectionSource)
+   
+     $TotalCheckStatistics=$TotalCheckStatistics+$CheckStatistics
+     $TotalCheckIndexesAndStatistics=$TotalCheckIndexesAndStatistics+$CheckIndexesAndStatistics
+     $TotalCheckMissingIndexes=$TotalCheckMissingIndexes+$CheckMissingIndexes
+     $TotalCheckScopeConfiguration=$TotalCheckScopeConfiguration+$CheckScopeConfiguration
+     $TotalCheckTunningRecomendations=$TotalCheckTunningRecomendations+$CheckTunningRecomendations
+     $TotalCheckFragmentationIndexes=$TotalCheckFragmentationIndexes+$CheckFragmentationIndexes
+     $TotalCheckCommandTimeout=$TotalCheckCommandTimeout+$CheckCommandTimeout
+
+
  
- 
- logMsg("Closing the connection..") (1)
- $SQLConnectionSource.Close() 
+   logMsg("Closing the connection and summary for " + $DbsArray[$iDBs]) (3)
+   logMsg("Number of Issues with statistics           : " + $CheckStatistics )  (1)
+   logMsg("Number of Issues with statistics/indexes   : " + $CheckIndexesAndStatistics )  (1)
+   logMsg("Number of Issues with Timeouts             : " + $CheckCommandTimeout )  (1)
+   logMsg("Number of Issues with Indexes Fragmentation: " + $CheckFragmentationIndexes )  (1)
+   logMsg("Number of Issues with Scoped Configuration : " + $CheckScopeConfiguration )  (1)
+   logMsg("Number of Issues with Tuning Recomendation : " + $CheckTunningRecomendations )  (1)
+   logMsg("Number of Issues with Missing Indexes      : " + $CheckMissingIndexes )  (1)
+   $SQLConnectionSource.Close() 
+ }
  Remove-Variable password
- logMsg("Performance Collector Script was executed correctly")  (1)
+ logMsg("Performance Collector Script was executed correctly")  (3)
+ logMsg("Total Number of Issues with statistics           : " + $TotalCheckStatistics )  (1)
+ logMsg("Total Number of Issues with statistics/indexes   : " + $TotalCheckIndexesAndStatistics )  (1)
+ logMsg("Total Number of Issues with Timeouts             : " + $TotalCheckCommandTimeout )  (1)
+ logMsg("Total Number of Issues with Indexes Fragmentation: " + $TotalCheckFragmentationIndexes )  (1)
+ logMsg("Total Number of Issues with Scoped Configuration : " + $TotalCheckScopeConfiguration )  (1)
+ logMsg("Total Number of Issues with Tuning Recomendation : " + $TotalCheckTunningRecomendations )  (1)
+ logMsg("Total Number of Issues with Missing Indexes      : " + $TotalCheckMissingIndexes )  (1)
+
 }
 catch
   {
