@@ -17,6 +17,7 @@ Performance Collector Checker. This Powershell script has been designed with a m
 - **Check if we have an index with more than 50% fragmented** 
 - **Check if we have missing indexes** 
 - **Check if we have command execution timeout** 
+- **Check top 10 of wait stats** 
 
 Basically we need to configure the parameters:
 
@@ -25,11 +26,12 @@ Basically we need to configure the parameters:
 - **$server** = "xxxxx.database.windows.net" // Azure SQL Server name
 - **$user** = "xxxxxx" // User Name
 - **$passwordSecure** = "xxxxxx" // Password
-- **$Db** = "xxxxxx"      // Database Name
+- **$Db** = "xxxxxx"      // Database Name, if you type the value ALL, all databases will be checked.
 - **$Folder** = $true     // Folder where the log file will be generated with all the issues found.
 
 ## Outcome
 
 - **PerfChecker.Log** = Contains all the issues found.
+- **PerfCheckerWaitStats_dbname.Log** = Contains the information about the wait stats per database.
 
 Enjoy!
