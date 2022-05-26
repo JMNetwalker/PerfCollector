@@ -169,6 +169,12 @@ function CheckCommandTimeout($connection)
 
 }
 
+
+
+#-------------------------------------------------------------------------------
+# Check missing indexes.
+#-------------------------------------------------------------------------------
+
 function CheckMissingIndexes($connection)
 {
  try
@@ -603,6 +609,75 @@ param([Parameter(Mandatory=$true,
 
 return [RegEx]::Replace($Name, "[{0}]" -f ([RegEx]::Escape([String][System.IO.Path]::GetInvalidFileNameChars())), '')}
 
+#-------------------------------------------------------------------------------
+# Check queries with more waits stats querying QDS
+# Save the result in a csv file on the choosen folder
+# 
+#-------------------------------------------------------------------------------
+function Checkwaits{
+ Param([Parameter(Mandatory=$true)]
+       [System.String]$DBAccess,
+       [Parameter(Mandatory=$true)]
+       [System.String]$File)
+
+  try {
+    logMsg( "---- Checking Waits health (Started) (REF: https://docs.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-os-wait-stats-transact-sql?view=sql-server-ver16)---- " ) (1)
+    $selectdata = "
+select TOP 10 wqds.wait_category_desc,
+wqds.total_query_wait_time_ms, 
+wqds.avg_query_wait_time_ms, 
+wqds.execution_type_desc, 
+qdsp.query_id,
+replace(replace(tex.query_sql_text,CHAR(13),' '),CHAR(10),' ') AS query_sql_text,
+CASE
+  WHEN
+    wqds.wait_category_desc = 'Network IO'
+      THEN
+        'Please check  - ASYNC_NETWORK_IO, NET_WAITFOR_PACKET, PROXY_NETWORK_IO, EXTERNAL_SCRIPT_NETWORK_IO  - information https://docs.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-db-wait-stats-azure-sql-database?view=azuresqldb-current'
+ WHEN
+    wqds.wait_category_desc = 'Memory'
+      THEN
+        'Please check - RESOURCE_SEMAPHORE, CMEMTHREAD, CMEMPARTITIONED, EE_PMOLOCK, MEMORY_ALLOCATION_EXT, RESERVED_MEMORY_ALLOCATION_EXT, MEMORY_GRANT_UPDATE - information https://docs.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-db-wait-stats-azure-sql-database?view=azuresqldb-current'
+ WHEN
+    wqds.wait_category_desc = 'CPU'
+      THEN
+        'Please check  - SOS_SCHEDULER_YIELD  - information https://docs.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-db-wait-stats-azure-sql-database?view=azuresqldb-current'
+		 WHEN
+    wqds.wait_category_desc = 'Buffer IO'
+      THEN
+        'Please check - PAGEIOLATCH_% - information https://docs.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-db-wait-stats-azure-sql-database?view=azuresqldb-current'
+		    WHEN
+		   wqds.wait_category_desc = 'Idle'
+      THEN
+        'Please check  - SLEEP_%, LAZYWRITER_SLEEP, SQLTRACE_BUFFER_FLUSH, SQLTRACE_INCREMENTAL_FLUSH_SLEEP, SQLTRACE_WAIT_ENTRIES, FT_IFTS_SCHEDULER_IDLE_WAIT, XE_DISPATCHER_WAIT, REQUEST_FOR_DEADLOCK_SEARCH, LOGMGR_QUEUE, ONDEMAND_TASK_QUEUE, CHECKPOINT_QUEUE, XE_TIMER_EVENT - information https://docs.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-db-wait-stats-azure-sql-database?view=azuresqldb-current'
+		ELSE
+		'Please check the link for more information https://docs.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-db-wait-stats-azure-sql-database?view=azuresqldb-current'
+END AS Recoommendation
+from sys.query_store_wait_stats as wqds
+join sys.query_store_plan as qdsp 
+on qdsp.plan_id = wqds.plan_id
+join sys.query_store_query as query
+on query.query_id = qdsp.query_id
+join sys.query_store_query_text as tex
+on query.query_text_id = tex.query_text_id
+order by total_query_wait_time_ms desc
+
+"
+               
+    Invoke-Sqlcmd -ServerInstance $server -Database $DBAccess -Query $selectdata  -Username $user -Password $password -Verbose | Export-Csv $File  -Delimiter "," -NoTypeInformation
+    
+    logMsg( "----------------------------------------- " ) (1)
+    logMsg( "---- Checking waits stats (Finished) ---- " ) (1)
+    logMsg( "----------------------------------------- " ) (1)
+    logMsg( "---- Please check " + $File + " to check all the information about the waits" ) (3)
+    logMsg( "----------------------------------------- " ) (1)
+  }
+  catch {
+    logMsg("Not able to run waits stats..." + $Error[0].Exception) (2)
+  } 
+            
+}
+
 try
 {
 Clear
@@ -636,6 +711,7 @@ $DbsArray = [System.Collections.ArrayList]::new()
  $CheckTunningRecomendations=0
  $CheckFragmentationIndexes=0
  $CheckCommandTimeout=0
+ $CheckWaits=0
 
  $TotalCheckStatistics=0
  $TotalCheckIndexesAndStatistics=0
@@ -644,6 +720,7 @@ $DbsArray = [System.Collections.ArrayList]::new()
  $TotalCheckTunningRecomendations=0
  $TotalCheckFragmentationIndexes=0
  $TotalCheckCommandTimeout=0
+ $TotalCheckWaits=0
 
 #--------------------------------
 #Run the process
@@ -664,10 +741,10 @@ $sFolderV = GiveMeFolderName($Folder) #Creating a correct folder adding at the e
 $LogFile = $sFolderV + "PerfChecker.Log"                  #Logging the operations.
 $LogFileSolution = $sFolderV + "PerfCheckerSolution.Log"  #Logging the solution.
 
-logMsg("Deleting Log") (1)
-   $result = DeleteFile($LogFile) #Delete Log file
-   $result = DeleteFile($LogFileSolution) #Delete Log file
-logMsg("Deleted Log") (1)
+logMsg("Deleting Logs") (1)
+   $result = DeleteFile($LogFile)         #Delete Log file
+   $result = DeleteFile($LogFileSolution) #Delete Log Solution file
+logMsg("Deleted Logs") (1)
 
 if($Db -eq "ALL")
 {
@@ -716,6 +793,7 @@ else
      $CheckTunningRecomendations=0
      $CheckFragmentationIndexes=0
      $CheckCommandTimeout=0
+     $CheckWaits=0
 
      $CheckStatistics = CheckStatistics($SQLConnectionSource)
      $CheckIndexesAndStatistics = CheckIndexesAndStatistics($SQLConnectionSource)
@@ -724,6 +802,13 @@ else
      $CheckTunningRecomendations = CheckTunningRecomendations($SQLConnectionSource)
      $CheckFragmentationIndexes = CheckFragmentationIndexes($SQLConnectionSource)
      $CheckCommandTimeout = CheckCommandTimeout($SQLConnectionSource)
+
+     $FileName=Remove-InvalidFileNameChars($DbsArray[$iDBs])
+
+     $FileWaitStat = $sFolderV + "PerfCheckerWaitStats_" + $FileName + ".csv"    #Logging the wait stats per DB
+     $result = DeleteFile($FileWaitStat)                                         #Delete Wait Stats per DB
+
+     Checkwaits $DbsArray[$iDBs] $FileWaitStat
    
      $TotalCheckStatistics=$TotalCheckStatistics+$CheckStatistics
      $TotalCheckIndexesAndStatistics=$TotalCheckIndexesAndStatistics+$CheckIndexesAndStatistics
@@ -732,8 +817,8 @@ else
      $TotalCheckTunningRecomendations=$TotalCheckTunningRecomendations+$CheckTunningRecomendations
      $TotalCheckFragmentationIndexes=$TotalCheckFragmentationIndexes+$CheckFragmentationIndexes
      $TotalCheckCommandTimeout=$TotalCheckCommandTimeout+$CheckCommandTimeout
-
-
+     $TotalCheckWaits=$TotalCheckWaits+$CheckWaits
+     
  
    logMsg("Closing the connection and summary for " + $DbsArray[$iDBs]) (3)
    logMsg("Number of Issues with statistics           : " + $CheckStatistics )  (1)
@@ -743,6 +828,7 @@ else
    logMsg("Number of Issues with Scoped Configuration : " + $CheckScopeConfiguration )  (1)
    logMsg("Number of Issues with Tuning Recomendation : " + $CheckTunningRecomendations )  (1)
    logMsg("Number of Issues with Missing Indexes      : " + $CheckMissingIndexes )  (1)
+   
    $SQLConnectionSource.Close() 
  }
  Remove-Variable password
