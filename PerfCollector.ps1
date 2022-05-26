@@ -13,6 +13,7 @@
 #    5) Check if we have an index with more than 50% fragmented
 #    6) Check if we have missing indexes (SQL Server Instance)
 #    7) Check TSQL command execution timeouts using querying QDS
+#    8) Obtain the top 10 of wait stats from QDS.
 # Outcomes: 
 #    In the folder specified in $Folder variable we are going to have a file called PerfChecker.Log that contains all the operations done 
 #    and issues found.
