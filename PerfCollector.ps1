@@ -14,12 +14,12 @@
 #    6) Check if we have missing indexes (SQL Server Instance)
 #    7) Check TSQL command execution timeouts using querying QDS
 #    8) Obtain the top 10 of wait stats from QDS.
-#    9) Export all the results of Query Data Store to .bcp and .xml to be able to import in a consolidate table. 
+#    9) Export all the results of Query Data Store to .bcp and .xml to be able to import in a consolidate database. It is very useful when you have multiple databases in Azure SQL Managed Instance or Elastic Database Pool. 
 #   10) Obtain resource usage per database.
 #   11) Total amount of space and rows per table.
 # Outcomes: 
 #    In the folder specified in $Folder variable we are going to have a file called PerfChecker.Log that contains all the operations done 
-#    and issues found.
+#    and issues found. Also, we are going to have a file per database and check done with the results gathered.
 #----------------------------------------------------------------
 
 #----------------------------------------------------------------
@@ -766,7 +766,7 @@ function CheckStatusPerTable($connection ,$FileName, $iTimeOut)
    $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
    $command.CommandTimeout = $iTimeOut
    $command.Connection=$connection
-   $command.CommandText = "SELECT s.Name,
+   $command.CommandText = "SELECT s.Name + '.' + t.name,
                                   SUM(p.rows) AS RowCounts,
                                   SUM(a.total_pages) * 8 AS TotalSpaceKB, 
                                   SUM(a.used_pages) * 8 AS UsedSpaceKB, 
@@ -784,7 +784,7 @@ function CheckStatusPerTable($connection ,$FileName, $iTimeOut)
                         WHERE t.is_ms_shipped = 0
                             AND i.OBJECT_ID > 255 
                         GROUP BY 
-                            s.Name"
+                            s.Name + '.' + t.name"
   $Reader = $command.ExecuteReader(); 
   $StringReport = "Table                                                                                               "
   $StringReport = $StringReport + "Rows                        "                   
