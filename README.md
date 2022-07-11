@@ -1,5 +1,5 @@
 # PerfCollector
-Performance Collector Checker. This Powershell script has been designed with a main idea check the main topics that could impact in your database performance.
+Performance Collector Checker. This Powershell script has been designed with a main idea check the main topics that could impact in your database(s) performance. Could be possible to use for **Single Azure SQL Database, Azure SQL Elastic Pool or Azure SQL Managed Instance**.
 [Additional Information](https://techcommunity.microsoft.com/t5/azure-database-support-blog/lesson-learned-195-performance-health-self-check-for-azure-sql/ba-p/3277878) In this [Video](https://youtu.be/vg6S4He0rxY) you could find out more information how to use this PowerShell Script.
 
 - **Check if the statistics** 
@@ -42,8 +42,8 @@ Basically we need to configure the parameters:
   + Extension .Txt that contains the report of the operation done. 
   + Extension .task that contains a possible mitigation about the issue found. 
   + For the extraction of query data store this PowerShell script will generated two additional files per QDS table:
-    ++ Extension .bcp with the information exported.
-    ++ Extension .xml with the structure of this .bcp file.  
+    + Extension .bcp with the information exported.
+    + Extension .xml with the structure of this .bcp file.  
 
 
 Enjoy!
