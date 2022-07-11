@@ -14,6 +14,9 @@
 #    6) Check if we have missing indexes (SQL Server Instance)
 #    7) Check TSQL command execution timeouts using querying QDS
 #    8) Obtain the top 10 of wait stats from QDS.
+#    9) Export all the results of Query Data Store to .bcp and .xml to be able to import in a consolidate table. 
+#   10) Obtain resource usage per database.
+#   11) Total amount of space and rows per table.
 # Outcomes: 
 #    In the folder specified in $Folder variable we are going to have a file called PerfChecker.Log that contains all the operations done 
 #    and issues found.
@@ -25,8 +28,10 @@
 param($server = "", #ServerName parameter to connect,for example, myserver.database.windows.net
       $user = "", #UserName parameter  to connect
       $passwordSecure = "", #Password Parameter  to connect
-      $Db = "", #DBName Parameter  to connect
-      $Folder = "c:\PerfChecker") #Folder Parameter to save the log and solution files, for example, c:\PerfChecker
+      $Db = "ALL", #DBName Parameter  to connect. Type ALL to check all the databases running in the server
+      $Folder = "c:\PerfChecker", #Folder Parameter to save the log and solution files, for example, c:\PerfChecker
+      $DropExisting=1, #Drop (1) the previous file saved in the folder with extensions .bcp, .xml,.csv, .txt, .task !=1 = leave the files
+      $ElasticDBPoolName = "") #Name of the elastic DB Pool if you want to filter only by elastic DB Pool.
 
 
 #-------------------------------------------------------------------------------
@@ -34,14 +39,14 @@ param($server = "", #ServerName parameter to connect,for example, myserver.datab
 # 1.- Review if number of rows is different of rows_sampled
 # 2.- Review if we have more than 15 days that the statistics have been updated.
 #-------------------------------------------------------------------------------
-function CheckStatistics($connection)
+function CheckStatistics($connection,$FileName, $FileNameLogSolution , $iTimeOut)
 {
  try
  {
    $Item=0
-   logMsg( "---- Checking Statistics health (Started) (REF: https://docs.microsoft.com/en-us/sql/t-sql/statements/update-statistics-transact-sql?view=sql-server-ver15)---- " ) (1)
+   logMsg( "---- Checking Statistics health (Started) (REF: https://docs.microsoft.com/en-us/sql/t-sql/statements/update-statistics-transact-sql?view=sql-server-ver15)---- " ) (1) $true $FileName 
    $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
-   $command.CommandTimeout = 60
+   $command.CommandTimeout = $iTimeOut
    $command.Connection=$connection
    $command.CommandText = "SELECT sp.stats_id, stat.name, o.name, filter_definition, last_updated, rows, rows_sampled, steps, unfiltered_rows, modification_counter,  DATEDIFF(DAY, last_updated , getdate()) AS Diff, schema_name(o.schema_id) as SchemaName
                            FROM sys.stats AS stat   
@@ -54,8 +59,8 @@ function CheckStatistics($connection)
      if( $Reader.GetValue(5) -gt $Reader.GetValue(6)) #If number rows is different rows_sampled
      {
        $Item=$Item+1
-       logMsg("Table/statistics: " + $Reader.GetValue(11).ToString() +"."+ $Reader.GetValue(2).ToString() + "/" + $Reader.GetValue(1).ToString() + " possible outdated (Rows_Sampled is less than rows of the table)") (2)
-       logSolution("UPDATE STATISTICS [" + $Reader.GetValue(11).ToString() +"].["+ $Reader.GetValue(2).ToString() + "]([" + $Reader.GetValue(1).ToString() + "]) WITH FULLSCAN")
+       logMsg("Table/statistics: " + $Reader.GetValue(11).ToString() +"."+ $Reader.GetValue(2).ToString() + "/" + $Reader.GetValue(1).ToString() + " possible outdated (Rows_Sampled is less than rows of the table)") (2) $true $FileName 
+       logSolution("UPDATE STATISTICS [" + $Reader.GetValue(11).ToString() +"].["+ $Reader.GetValue(2).ToString() + "]([" + $Reader.GetValue(1).ToString() + "]) WITH FULLSCAN") $FileNameLogSolution
      }
      if( TestEmpty($Reader.GetValue(10))) {}
      else
@@ -63,19 +68,19 @@ function CheckStatistics($connection)
       if($Reader.GetValue(10) -gt 15) #if we have more than 15 days since the lastest update.
       {
        $Item=$Item+1
-       logMsg("Table/statistics: " + $Reader.GetValue(11).ToString() +"."+ $Reader.GetValue(2).ToString() + "/" + $Reader.GetValue(1).ToString() + " possible outdated (15 days since the latest update).") (2)
-       logSolution("UPDATE STATISTICS [" + $Reader.GetValue(11).ToString() +"].["+ $Reader.GetValue(2).ToString() + "]([" + $Reader.GetValue(1).ToString() + "]) WITH FULLSCAN")
+       logMsg("Table/statistics: " + $Reader.GetValue(11).ToString() +"."+ $Reader.GetValue(2).ToString() + "/" + $Reader.GetValue(1).ToString() + " possible outdated (15 days since the latest update).") (2) $true $FileName 
+       logSolution("UPDATE STATISTICS [" + $Reader.GetValue(11).ToString() +"].["+ $Reader.GetValue(2).ToString() + "]([" + $Reader.GetValue(1).ToString() + "]) WITH FULLSCAN") $FileNameLogSolution
       }
      }
    }
 
    $Reader.Close();
-   logMsg( "---- Checking Statistics health (Finished) ---- " ) (1)
+   logMsg( "---- Checking Statistics health (Finished) ---- " ) (1) $true $FileName 
    return $Item
   }
   catch
    {
-    logMsg("Not able to run statistics health checker..." + $Error[0].Exception) (2)
+    logMsg("Not able to run statistics health checker..." + $Error[0].Exception) (2) $true $FileName 
     return 0
    } 
 
@@ -86,14 +91,14 @@ function CheckStatistics($connection)
 # Check if we have any auto-tunning recomendations for Azure SQL DB.
 #-------------------------------------------------------------------------------
 
-function CheckTunningRecomendations($connection)
+function CheckTunningRecomendations($connection,$FileName, $FileNameLogSolution , $iTimeOut)
 {
  try
  {
    $Item=0
-   logMsg( "---- Checking Tuning Recomendations (Started) Ref: https://docs.microsoft.com/en-us/azure/azure-sql/database/automatic-tuning-overview ---- " ) (1)
+   logMsg( "---- Checking Tuning Recomendations (Started) Ref: https://docs.microsoft.com/en-us/azure/azure-sql/database/automatic-tuning-overview ---- " ) (1) $true $FileName
    $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
-   $command.CommandTimeout = 60
+   $command.CommandTimeout = $iTimeOut
    $command.Connection=$connection
    $command.CommandText = "select COUNT(1) from sys.dm_db_tuning_recommendations Where Execute_action_initiated_time = '1900-01-01 00:00:00.0000000'"
    $Reader = $command.ExecuteReader(); 
@@ -102,17 +107,73 @@ function CheckTunningRecomendations($connection)
      if( $Reader.GetValue(0) -gt 0) 
      {
        $Item=$Item+1
-       logMsg("----- Please, review tuning recomendations in the portal" ) (2)
+       logMsg("----- Please, review tuning recomendations in the portal" ) (2) $true $FileName
      }
    }
 
    $Reader.Close();
-   logMsg( "---- Checking tuning recomendations (Finished) ---- " ) (1)
+   logMsg( "---- Checking tuning recomendations (Finished) ---- " ) (1) $true $FileName
    return $Item
   }
   catch
    {
-    logMsg("Not able to run tuning recomendations..." + $Error[0].Exception) (2)
+    logMsg("Not able to run tuning recomendations..." + $Error[0].Exception) (2) $true $FileName
+    return 0
+   } 
+
+}
+
+#-------------------------------------------------------------------------------
+# Export all results of Query Data Store
+#-------------------------------------------------------------------------------
+
+function ExportQueryDataStore($connection, $DbName , $iTimeOut)
+{
+ try
+ {
+   $Item=0
+   logMsg( "---- Exporting all results of Query Data Store ---- " ) (1) $true 
+   $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
+   $command.CommandTimeout = $iTimeOut
+   $command.Connection=$connection
+   $command.CommandText = "select name from sys.all_objects where name like '%query_store%' and type = 'V' order by name" 
+   logMsg("Executed the query to obtain the tables of query store..") (1) $true
+   
+   $Reader = $command.ExecuteReader(); 
+
+   $DbNameFormated = Remove-InvalidFileNameChars($DbName)
+
+   while($Reader.Read())
+   {
+    
+    $sTableNameFormated = Remove-InvalidFileNameChars($Reader.GetSqlString(0).ToString() )
+    
+
+    $FileBCP = $sFolderV + $DbNameFormated + "_" + $sTableNameFormated + ".bcp"
+    $FileFMT = $sFolderV + $DbNameFormated + "_" + $sTableNameFormated + ".xml"
+
+    $CommandFmt="bcp 'sys." + $Reader.GetSqlString(0).ToString() + "' Format nul -f "+$FileFMT + " -rMsSupportRowTerminator -tMsSupportFieldTerminator -c -x -S " +$server+" -U " + $user + " -P "+$password+" -d "+$DbName
+    $CommandOut="bcp 'sys." + $Reader.GetSqlString(0).ToString() + "' out "+$FileBCP + " -c -rMsSupportRowTerminator -tMsSupportFieldTerminator -S " +$server+" -U " + $user + " -P "+$password+" -d "+$DbName
+ 
+    logMsg("Obtain the Format file for " + $DbName + "-" + $FileFMT ) (3) $true
+      $result = Invoke-Expression -Command $CommandFmt
+    logMsg("Executed the Format file for " + $DbName + "-" + $FileFMT + "-" + $result)  $true
+
+    logMsg("Obtain the BCP file for " + $DbName + "-" + $FileBCP ) $true
+      $result = Invoke-Expression -Command $CommandOut 
+    logMsg("Executed the BCP file for " + $DbName + "-" + $FileBCP + "-" + $result) $true
+
+    $Item=$Item+1;
+
+   }
+
+   $Reader.Close();
+   logMsg( "---- Exporting Query Data Store (Finished) ---- " ) (1) $true 
+   return $Item
+  }
+  catch
+   {
+    logMsg("Not able to export Query Data Store..." + $Error[0].Exception) (2) $true 
     return 0
    } 
 
@@ -122,14 +183,14 @@ function CheckTunningRecomendations($connection)
 # Check if you have any query that gave a command execution timeout.
 #-------------------------------------------------------------------------------
 
-function CheckCommandTimeout($connection)
+function CheckCommandTimeout($connection,$FileName, $FileNameLogSolution , $iTimeOut)
 {
  try
  {
    $Item=0
-   logMsg( "---- Checking Command Timeout Execution (Started) Ref: https://docs.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-query-store-runtime-stats-transact-sql?view=sql-server-ver15---- " ) (1)
+   logMsg( "---- Checking Command Timeout Execution (Started) Ref: https://docs.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-query-store-runtime-stats-transact-sql?view=sql-server-ver15---- " ) (1) $true $FileName
    $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
-   $command.CommandTimeout = 6000
+   $command.CommandTimeout = $iTimeOut
    $command.Connection=$connection
    $command.CommandText = "SELECT
                            qst.query_sql_text,
@@ -150,21 +211,21 @@ function CheckCommandTimeout($connection)
    while($Reader.Read())
    {
        $Item=$Item+1
-       logMsg("----- Please, review the following command timeout execution --------------- " ) (2)
-       logMsg("----- Execution Type     : " + $Reader.GetValue(1).ToString() + "-" + $Reader.GetValue(2).ToString()) (2)
-       logMsg("----- Execution Count    : " + $Reader.GetValue(4).ToString() + "- Last Execution Time: " + $Reader.GetValue(5).ToString()) (2)
-       logMsg("----- TSQL               : " + $Reader.GetValue(0).ToString() ) (2)
-       logMsg("----- Execution Plan XML : " + $Reader.GetValue(3).ToString() ) (2) $false
-       logMsg("-----------------------------------------------------------------------------" ) (2)
+       logMsg("----- Please, review the following command timeout execution --------------- " ) (2) $true $FileName
+       logMsg("----- Execution Type     : " + $Reader.GetValue(1).ToString() + "-" + $Reader.GetValue(2).ToString()) (2) $true $FileName
+       logMsg("----- Execution Count    : " + $Reader.GetValue(4).ToString() + "- Last Execution Time: " + $Reader.GetValue(5).ToString()) (2) $true $FileName
+       logMsg("----- TSQL               : " + $Reader.GetValue(0).ToString() ) (2) $true $FileName
+       logMsg("----- Execution Plan XML : " + $Reader.GetValue(3).ToString() ) (2) $false $FileName
+       logMsg("-----------------------------------------------------------------------------" ) (2) $true $FileName
    }
 
    $Reader.Close();
-   logMsg( "---- Checking Command Timeout Execution (Finished) ---- " ) (1)
+   logMsg( "---- Checking Command Timeout Execution (Finished) ---- " ) (1) $true $FileName
    return $Item
   }
   catch
    {
-    logMsg("Not able to run Command Timeout Execution..." + $Error[0].Exception) (2)
+    logMsg("Not able to run Command Timeout Execution..." + $Error[0].Exception) (2) $true $FileName
     return 0
    } 
 
@@ -176,14 +237,14 @@ function CheckCommandTimeout($connection)
 # Check missing indexes.
 #-------------------------------------------------------------------------------
 
-function CheckMissingIndexes($connection)
+function CheckMissingIndexes($connection ,$FileName, $FileNameLogSolution , $iTimeOut)
 {
  try
  {
    $Item=0
-   logMsg( "---- Checking Missing Indexes (Started) Ref: https://docs.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-db-missing-index-groups-transact-sql?view=sql-server-ver15 ---- " ) (1)
+   logMsg( "---- Checking Missing Indexes (Started) Ref: https://docs.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-db-missing-index-groups-transact-sql?view=sql-server-ver15 ---- " ) (1) $true $FileName
    $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
-   $command.CommandTimeout = 60
+   $command.CommandTimeout = $iTimeOut
    $command.Connection=$connection
    $command.CommandText = "SELECT CONVERT (varchar, getdate(), 126) AS runtime,
                            mig.index_group_handle, mid.index_handle,
@@ -234,21 +295,21 @@ function CheckMissingIndexes($connection)
    }
    if($bFound)
    {
-     logMsg( "---- Missing Indexes found ---- " ) (1)
-     logMsg( $ColName ) (1)
-     for ($iColumn=0; $iColumn -lt $Content.Count; $iColumn++) 
+     logMsg( "---- Missing Indexes found ---- " ) (1) $true $FileName
+     logMsg( $ColName ) (1) $true $FileName
+     for ($iColumn=0; $iColumn -lt $Content.Count; $iColumn++)  
      {
-      logMsg( $Content[$iColumn]) (1)
+      logMsg( $Content[$iColumn]) (1) $true $FileName
       $Item=$Item+1
      }
    }
-   $Reader.Close();
-   logMsg( "---- Checking missing indexes (Finished) ---- " ) (1)
+   $Reader.Close(); 
+   logMsg( "---- Checking missing indexes (Finished) ---- " ) (1) $true $FileName
    return $Item
   }
   catch
    {
-    logMsg("Not able to run missing indexes..." + $Error[0].Exception) (2)
+    logMsg("Not able to run missing indexes..." + $Error[0].Exception) (2) $true $FileName
     return 0
    } 
 
@@ -261,14 +322,14 @@ function CheckMissingIndexes($connection)
 # 2.- Review if we have more than 15 days that the statistics have been updated.
 #-------------------------------------------------------------------------------
 
-function CheckIndexesAndStatistics($connection )
+function CheckIndexesAndStatistics($connection, $FileName, $FileNameLogSolution , $iTimeOut )
 {
  try
  {
    $Item=0
-   logMsg( "---- Checking Indexes and Statistics health (Started) - Reference: https://docs.microsoft.com/en-us/sql/t-sql/statements/update-statistics-transact-sql?view=sql-server-ver15 -" ) (1)
+   logMsg( "---- Checking Indexes and Statistics health (Started) - Reference: https://docs.microsoft.com/en-us/sql/t-sql/statements/update-statistics-transact-sql?view=sql-server-ver15 -" ) (1) $true $FileName 
    $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
-   $command.CommandTimeout = 60
+   $command.CommandTimeout = $iTimeOut
    $command.Connection=$connection
    $command.CommandText = "SELECT ind.index_id, ind.name, o.name, stat.filter_definition, sp.last_updated, sp.rows, sp.rows_sampled, sp.steps, sp.unfiltered_rows, sp.modification_counter,  DATEDIFF(DAY, last_updated , getdate()) AS Diff, schema_name(o.schema_id) as SchemaName,*
                            from sys.indexes ind
@@ -282,8 +343,8 @@ function CheckIndexesAndStatistics($connection )
      if( $Reader.GetValue(5) -gt $Reader.GetValue(6)) #If number rows is different rows_sampled
      {
        $Item=$Item+1
-       logMsg("Table/Index: " + $Reader.GetValue(11).ToString() +"."+ $Reader.GetValue(2).ToString() + "/" + $Reader.GetValue(1).ToString() + " possible outdated - (Rows_Sampled is less than rows of the table)" ) (2)
-       logSolution("ALTER INDEX [" + $Reader.GetValue(1).ToString() + "] ON [" + $Reader.GetValue(11).ToString() +"].["+ $Reader.GetValue(2).ToString() + "] REBUILD")
+       logMsg("Table/Index: " + $Reader.GetValue(11).ToString() +"."+ $Reader.GetValue(2).ToString() + "/" + $Reader.GetValue(1).ToString() + " possible outdated - (Rows_Sampled is less than rows of the table)" ) (2) $true $FileName 
+       logSolution("ALTER INDEX [" + $Reader.GetValue(1).ToString() + "] ON [" + $Reader.GetValue(11).ToString() +"].["+ $Reader.GetValue(2).ToString() + "] REBUILD") $FileNameLogSolution
      }
      if( TestEmpty($Reader.GetValue(10))) {}
      else
@@ -291,19 +352,19 @@ function CheckIndexesAndStatistics($connection )
       if($Reader.GetValue(10) -gt 15)
       {
        $Item=$Item+1
-       logMsg("Table/Index: " + $Reader.GetValue(11).ToString() +"."+ $Reader.GetValue(2).ToString() + "/" + $Reader.GetValue(1).ToString() + " possible outdated - (15 days since the latest update)" ) (2)
-       logSolution("ALTER INDEX [" + $Reader.GetValue(1).ToString() + "] ON [" + $Reader.GetValue(11).ToString() +"].["+ $Reader.GetValue(2).ToString() + "] REBUILD")
+       logMsg("Table/Index: " + $Reader.GetValue(11).ToString() +"."+ $Reader.GetValue(2).ToString() + "/" + $Reader.GetValue(1).ToString() + " possible outdated - (15 days since the latest update)" ) (2) $true $FileName 
+       logSolution("ALTER INDEX [" + $Reader.GetValue(1).ToString() + "] ON [" + $Reader.GetValue(11).ToString() +"].["+ $Reader.GetValue(2).ToString() + "] REBUILD") $FileNameLogSolution
       }
      }
    }
 
    $Reader.Close();
-   logMsg( "---- Checking Indexes and Statistics health (Finished) ---- " ) (1)
+   logMsg( "---- Checking Indexes and Statistics health (Finished) ---- " ) (1) $true $FileName 
    return $Item
   }
   catch
    {
-    logMsg("Not able to run Indexes and statistics health checker..." + $Error[0].Exception) (2)
+    logMsg("Not able to run Indexes and statistics health checker..." + $Error[0].Exception) (2) $true $FileName 
     return 0
    } 
 
@@ -313,14 +374,14 @@ function CheckIndexesAndStatistics($connection )
 # Check if MAXDOP is 0 
 #-------------------------------------------------------------------------------
 
-function CheckScopeConfiguration($connection)
+function CheckScopeConfiguration($connection ,$FileName, $FileNameLogSolution , $iTimeOut)
 {
  try
  {
    $Item=0
-   logMsg( "---- Checking Scoped Configurations ---- Ref: https://docs.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-database-scoped-configurations-transact-sql?view=sql-server-ver15" ) (1)
+   logMsg( "---- Checking Scoped Configurations ---- Ref: https://docs.microsoft.com/en-us/sql/relational-databases/system-catalog-views/sys-database-scoped-configurations-transact-sql?view=sql-server-ver15" ) (1) $true $FileName
    $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
-   $command.CommandTimeout = 60
+   $command.CommandTimeout = $iTimeOut
    $command.Connection=$connection
    $command.CommandText = "select * from sys.database_scoped_configurations"
    $Reader = $command.ExecuteReader(); 
@@ -330,18 +391,18 @@ function CheckScopeConfiguration($connection)
      {
       if( $Reader.GetValue(2) -eq 0)
       {
-       logMsg("You have MAXDOP with value 0" ) (2)
+       logMsg("You have MAXDOP with value 0" ) (2) $true $FileName
        $Item=$Item+1
       }
      }
    }
    $Reader.Close();
-   logMsg( "---- Checking Scoped Configurations (Finished) ---- " ) (1)
+   logMsg( "---- Checking Scoped Configurations (Finished) ---- " ) (1) $true $FileName
    return $Item
   }
   catch
    {
-    logMsg("Not able to run Scoped Configurations..." + $Error[0].Exception) (2)
+    logMsg("Not able to run Scoped Configurations..." + $Error[0].Exception) (2) $true $FileName
     return 0 
    } 
 
@@ -351,14 +412,14 @@ function CheckScopeConfiguration($connection)
 # Check if we have an index with more than 50% of fragmentation. 
 #-------------------------------------------------------------------------------
 
-function CheckFragmentationIndexes($connection)
+function CheckFragmentationIndexes($connection,$FileName, $FileNameLogSolution , $iTimeOut)
 {
  try
  {
    $Item=0
-   logMsg( "---- Checking Index Fragmentation (Note: This process may take some time and resource) - Ref: https://docs.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-db-index-physical-stats-transact-sql?view=sql-server-ver15 ---- " ) (1)
+   logMsg( "---- Checking Index Fragmentation (Note: This process may take some time and resource) - Ref: https://docs.microsoft.com/en-us/sql/relational-databases/system-dynamic-management-views/sys-dm-db-index-physical-stats-transact-sql?view=sql-server-ver15 ---- " ) (1) $true $FileName
    $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
-   $command.CommandTimeout = 6000
+   $command.CommandTimeout = $iTimeOut
    $command.Connection=$connection
    $command.CommandText = "select 
 			               ObjectSchema = OBJECT_SCHEMA_NAME(idxs.object_id)
@@ -378,16 +439,16 @@ function CheckFragmentationIndexes($connection)
      if( $Reader.GetValue(3) -gt 50) #If fragmentation is greater than 50
      {
        $Item=$Item+1
-       logMsg("Table/Index: " + $Reader.GetValue(1).ToString() +"."+ $Reader.GetValue(2).ToString() + "/" + $Reader.GetValue(3).ToString() + " high fragmentation" ) (2)
+       logMsg("Table/Index: " + $Reader.GetValue(1).ToString() +"."+ $Reader.GetValue(2).ToString() + "/" + $Reader.GetValue(3).ToString() + " high fragmentation" ) (2) $true $FileName
      }
    }
    $Reader.Close();
-   logMsg( "---- Checking Index Fragmentation (Finished) ---- " ) (1)
+   logMsg( "---- Checking Index Fragmentation (Finished) ---- " ) (1) $true $FileName
    return $Item
   }
   catch
    {
-    logMsg("Not able to run Index Fragmentation..." + $Error[0].Exception) (2)
+    logMsg("Not able to run Index Fragmentation..." + $Error[0].Exception) (2) $true $FileName
     return 0
    } 
 
@@ -413,7 +474,7 @@ Function GiveMeConnectionSource($DBs)
     }
   catch
    {
-    logMsg("Not able to connect - Retrying the connection..." + $Error[0].Exception) (2)
+    logMsg("Not able to connect - " + $DBs + " - Retrying the connection..." + $Error[0].Exception) (2)
     Start-Sleep -s 5
    }
   }
@@ -477,13 +538,28 @@ function logMsg
          [Parameter(Mandatory=$false, Position=1)]
          [int] $Color,
          [Parameter(Mandatory=$false, Position=2)]
-         [boolean] $Show=$true 
+         [boolean] $Show=$true, 
+         [Parameter(Mandatory=$false, Position=3)]
+         [string] $sFileName,
+         [Parameter(Mandatory=$false, Position=4)]
+         [boolean] $bShowDate=$true
+
     )
   try
    {
-    $Fecha = Get-Date -format "yyyy-MM-dd HH:mm:ss"
-    $msg = $Fecha + " " + $msg
-    Write-Output $msg | Out-File -FilePath $LogFile -Append
+    if($bShowDate -eq $true)
+    {
+      $Fecha = Get-Date -format "yyyy-MM-dd HH:mm:ss"
+      $msg = $Fecha + " " + $msg
+    }
+    If( TestEmpty($SFileName) )
+    {
+      Write-Output $msg | Out-File -FilePath $LogFile -Append
+    }
+    else
+    {
+      Write-Output $msg | Out-File -FilePath $sFileName -Append
+    }
     $Colores="White"
     $BackGround = 
     If($Color -eq 1 )
@@ -524,12 +600,12 @@ function logSolution
     (
          [Parameter(Mandatory=$true, Position=0)]
          [string] $msg,
-         [Parameter(Mandatory=$false, Position=1)]
-         [int] $Color
+         [Parameter(Mandatory=$false, Position=3)]
+         [string] $sFileName
     )
   try
    {
-    Write-Output $msg | Out-File -FilePath $LogFileSolution -Append
+    Write-Output $msg | Out-File -FilePath $sFileName -Append
    }
   catch
   {
@@ -661,9 +737,7 @@ join sys.query_store_query as query
 on query.query_id = qdsp.query_id
 join sys.query_store_query_text as tex
 on query.query_text_id = tex.query_text_id
-order by total_query_wait_time_ms desc
-
-"
+order by total_query_wait_time_ms desc"
                
     Invoke-Sqlcmd -ServerInstance $server -Database $DBAccess -Query $selectdata  -Username $user -Password $password -Verbose | Export-Csv $File  -Delimiter "," -NoTypeInformation
     
@@ -678,6 +752,138 @@ order by total_query_wait_time_ms desc
   } 
             
 }
+
+#-------------------------------------------------------------------------------
+# Check the rows, space used, allocated and numbers of tables. 
+#-------------------------------------------------------------------------------
+function CheckStatusPerTable($connection ,$FileName, $iTimeOut)
+{
+ try
+ {
+   logMsg( "---- Checking Status per Table ---- " ) (1) $true $FileName 
+   $Item=0
+
+   $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
+   $command.CommandTimeout = $iTimeOut
+   $command.Connection=$connection
+   $command.CommandText = "SELECT s.Name,
+                                  SUM(p.rows) AS RowCounts,
+                                  SUM(a.total_pages) * 8 AS TotalSpaceKB, 
+                                  SUM(a.used_pages) * 8 AS UsedSpaceKB, 
+                                 (SUM(a.total_pages) - SUM(a.used_pages)) * 8 AS UnusedSpaceKB
+                        FROM 
+                            sys.tables t
+                        INNER JOIN      
+                            sys.indexes i ON t.OBJECT_ID = i.object_id
+                        INNER JOIN 
+                            sys.partitions p ON i.object_id = p.OBJECT_ID AND i.index_id = p.index_id
+                        INNER JOIN 
+                            sys.allocation_units a ON p.partition_id = a.container_id
+                        LEFT OUTER JOIN 
+                            sys.schemas s ON t.schema_id = s.schema_id
+                        WHERE t.is_ms_shipped = 0
+                            AND i.OBJECT_ID > 255 
+                        GROUP BY 
+                            s.Name"
+  $Reader = $command.ExecuteReader(); 
+  $StringReport = "Table                                                                                               "
+  $StringReport = $StringReport + "Rows                        "                   
+  $StringReport = $StringReport + "Space                       "                  
+  $StringReport = $StringReport + "Used                        "                   
+  logMsg($StringReport) (1) $true $FileName -bShowDate $false
+  
+  while($Reader.Read())
+   {
+    $Item=$Item+1
+    $lTotalRows = $Reader.GetValue(1)
+    $lTotalSpace = $Reader.GetValue(2)
+    $lTotalUsed = $Reader.GetValue(3)
+    $lTotalUnUsed = $Reader.GetValue(4)
+    $StringReport = $Reader.GetValue(0).ToString().PadRight(100).Substring(0,99) + " "
+    $StringReport = $StringReport + $lTotalRows.ToString('N0').PadLeft(20) + " " 
+    $StringReport = $StringReport + $lTotalSpace.ToString('N0').PadLeft(20)  + " "
+    $StringReport = $StringReport + $lTotalUsed.ToString('N0').PadLeft(20)  
+    logMsg($StringReport) (1) $true $FileName -bShowDate $false
+   }
+
+   $Reader.Close();
+   return $Item
+  }
+  catch
+   {
+    $Reader.Close();
+    logMsg("Not able to run Checking Status per Table..." + $Error[0].Exception) (2)
+    return 0
+   } 
+
+}
+
+#-------------------------------------------------------------------------------
+# Show the performance counters of the database
+#-------------------------------------------------------------------------------
+
+function CheckStatusPerResource($connection,$FileName, $iTimeOut)
+{
+ try
+ {
+   logMsg( "---- Checking Status per Resources ---- " ) (1) $true $FileName
+   $Item=0
+   $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
+   $command.CommandTimeout = $iTimeOut
+   $command.Connection=$connection
+   $command.CommandText = "select end_time, avg_cpu_percent, avg_data_io_percent, avg_log_write_percent, avg_memory_usage_percent, max_worker_percent from sys.dm_db_resource_stats order by end_time desc"
+
+  $Reader = $command.ExecuteReader(); 
+  $StringReport = "Time                 "
+  $StringReport = $StringReport + "Avg_Cpu    "
+  $StringReport = $StringReport + "Avg_DataIO "
+  $StringReport = $StringReport + "Avg_Log    "              
+  $StringReport = $StringReport + "Avg_Memory "                   
+  $StringReport = $StringReport + "Max_Workers"                  
+
+  logMsg($StringReport) (1) $true $FileName -bShowDate $false
+  while($Reader.Read())
+   {
+    $Item=$Item+1
+    $lTotalCPU = $Reader.GetValue(1)
+    $lTotalDataIO = $Reader.GetValue(2)
+    $lTotalLog = $Reader.GetValue(3)
+    $lTotalMemory = $Reader.GetValue(4)
+    $lTotalWorkers = $Reader.GetValue(5)
+    $StringReport = $Reader.GetValue(0).ToString().PadLeft(20) + " "
+    $StringReport = $StringReport + $lTotalCPU.ToString('N2').PadLeft(10) + " "
+    $StringReport = $StringReport + $lTotalDataIO.ToString('N2').PadLeft(10) 
+    $StringReport = $StringReport + $lTotalLog.ToString('N2').PadLeft(10) 
+    $StringReport = $StringReport + $lTotalMemory.ToString('N2').PadLeft(10) 
+    $StringReport = $StringReport + $lTotalWorkers.ToString('N2').PadLeft(10) 
+    logMsg($StringReport) (1) $true $FileName -bShowDate $false
+   }
+
+   $Reader.Close();
+   return $Item
+  }
+  catch
+   {
+    logMsg("Not able to run Checking Status per Resources..." + $Error[0].Exception) (2) $true $FileName
+    return 0
+   } 
+
+}
+
+
+function sGiveMeFileName{
+ Param([Parameter(Mandatory=$true)]
+       [System.String]$DBAccess,
+       [Parameter(Mandatory=$true)]
+       [System.String]$File)
+  try 
+    {
+      return $FolderV + $DBAccess + $File 
+     }
+  catch {
+    return "_UnKnow.csv" 
+        } 
+  }
 
 try
 {
@@ -713,7 +919,10 @@ $DbsArray = [System.Collections.ArrayList]::new()
  $CheckFragmentationIndexes=0
  $CheckCommandTimeout=0
  $CheckWaits=0
-
+ $ExportQueryDataStore=0
+ $CheckStatusPerResource=0
+ $CheckStatusPerTable=0
+ 
  $TotalCheckStatistics=0
  $TotalCheckIndexesAndStatistics=0
  $TotalCheckMissingIndexes=0
@@ -722,11 +931,13 @@ $DbsArray = [System.Collections.ArrayList]::new()
  $TotalCheckFragmentationIndexes=0
  $TotalCheckCommandTimeout=0
  $TotalCheckWaits=0
+ $TotalExportQueryDataStore=0
+ $TotalCheckStatusPerResource=0
+ $TotalCheckStatusPerTable=0
 
 #--------------------------------
 #Run the process
 #--------------------------------
-
 
 logMsg("Creating the folder " + $Folder) (1)
    $result = CreateFolder($Folder) #Creating the folder that we are going to have the results, log and zip.
@@ -740,12 +951,34 @@ logMsg("Created the folder " + $Folder) (1)
 $sFolderV = GiveMeFolderName($Folder) #Creating a correct folder adding at the end \.
 
 $LogFile = $sFolderV + "PerfChecker.Log"                  #Logging the operations.
-$LogFileSolution = $sFolderV + "PerfCheckerSolution.Log"  #Logging the solution.
 
-logMsg("Deleting Logs") (1)
+logMsg("Deleting Operation Log file") (1)
    $result = DeleteFile($LogFile)         #Delete Log file
-   $result = DeleteFile($LogFileSolution) #Delete Log Solution file
-logMsg("Deleted Logs") (1)
+logMsg("Deleted Operation Log file") (1)
+
+logMsg("-------------------- Header Filter details --------------") (1)
+logMsg("  ServerName:           " + $server) (1)
+logMsg("  DB Filter :           " + $DB) (1)
+logMsg("  Folder    :           " + $Folder) (1)
+logMsg("  Delete Files:         " + $DropExisting) (1)
+logMsg("  Elastic DB Pool Name: " + $ElasticDBPoolName) (1)
+logMsg("-------------------- Footer Filter details --------------") (1)
+
+
+if( $DropExisting -eq 1)
+{
+    foreach ($f in ((Get-ChildItem -Path $sFolderV))) 
+    {
+        if($f.Extension -in (".bcp") -or $f.Extension -in (".xml") -or $f.Extension -in (".txt") -or $f.Extension -in (".task") -or $f.Extension -in (".csv"))
+        {
+            logMsg("Deleting Operation file: " + $f.FullName) (1)
+            $result = DeleteFile($f.FullName)
+            logMsg("Deleted Operation file: " + $f.FullName) (1)
+        }
+    }
+ }
+    
+
 
 if($Db -eq "ALL")
 {
@@ -759,12 +992,20 @@ if($Db -eq "ALL")
    $commandDB = New-Object -TypeName System.Data.SqlClient.SqlCommand
    $commandDB.CommandTimeout = 6000
    $commandDB.Connection=$SQLConnectionSource
-   $commandDB.CommandText = "SELECT name from sys.databases where name <> 'master' order by name"
+   if(TestEmpty($ElasticDBPoolName))
+   {
+     $commandDB.CommandText = "SELECT name from sys.databases where database_id >=5 order by name"
+   }
+   else
+   {
+     $commandDB.CommandText = "SELECT d.name as DatabaseName FROM sys.databases d inner join sys.database_service_objectives dso on d.database_id = dso.database_id WHERE dso.elastic_pool_name = '" + $ElasticDBPoolName + "' ORDER BY d.name"
+   }
       
    $ReaderDB = $commandDB.ExecuteReader(); 
    while($ReaderDB.Read())
    {
-      $DbsArray.Add($ReaderDB.GetValue(0).ToString())
+      [void]$DbsArray.Add($ReaderDB.GetValue(0).ToString())
+      logMsg("Database Name selected:" + $ReaderDB.GetValue(0).ToString()) (1)
    }
 
    $ReaderDB.Close();
@@ -795,20 +1036,24 @@ else
      $CheckFragmentationIndexes=0
      $CheckCommandTimeout=0
      $CheckWaits=0
-
-     $CheckStatistics = CheckStatistics($SQLConnectionSource)
-     $CheckIndexesAndStatistics = CheckIndexesAndStatistics($SQLConnectionSource)
-     $CheckMissingIndexes = CheckMissingIndexes($SQLConnectionSource)
-     $CheckScopeConfiguration = CheckScopeConfiguration( $SQLConnectionSource)
-     $CheckTunningRecomendations = CheckTunningRecomendations($SQLConnectionSource)
-     $CheckFragmentationIndexes = CheckFragmentationIndexes($SQLConnectionSource)
-     $CheckCommandTimeout = CheckCommandTimeout($SQLConnectionSource)
+     $ExportQueryDataStore=0
+     $CheckStatusPerResource=0
+     $CheckStatusPerTable=0
 
      $FileName=Remove-InvalidFileNameChars($DbsArray[$iDBs])
-
-     $FileWaitStat = $sFolderV + "PerfCheckerWaitStats_" + $FileName + ".csv"    #Logging the wait stats per DB
-     $result = DeleteFile($FileWaitStat)                                         #Delete Wait Stats per DB
-
+     $FileWaitStat = $sFolderV + $FileName + "_PerfCheckerWaitStats.csv" 
+     $result = DeleteFile($FileWaitStat)                                 
+     
+     $CheckStatistics = CheckStatistics $SQLConnectionSource ($sFolderV + $FileName + "_CheckStatistics.Txt") ($sFolderV + $FileName + "_CheckStatistics.Task") (3600)
+     $CheckIndexesAndStatistics = CheckIndexesAndStatistics $SQLConnectionSource ($sFolderV + $FileName + "_CheckIndexesStatistics.Txt") ($sFolderV + $FileName + "_CheckIndexesStatistics.Task") (3600)
+     $CheckMissingIndexes = CheckMissingIndexes $SQLConnectionSource ($sFolderV + $FileName + "_CheckMissingIndexes.Txt") ($sFolderV + $FileName + "_CheckMissingIndexes.Task") (3600)
+     $CheckScopeConfiguration = CheckScopeConfiguration $SQLConnectionSource ($sFolderV + $FileName + "_CheckScopeConfiguration.Txt") ($sFolderV + $FileName + "_CheckScopeConfiguration.Task") (3600)
+     $CheckTunningRecomendations = CheckTunningRecomendations $SQLConnectionSource ($sFolderV + $FileName + "_CheckTunningRecomendation.Txt") ($sFolderV + $FileName + "_CheckTunningRecomendation.Task") (3600)
+     $CheckFragmentationIndexes = CheckFragmentationIndexes $SQLConnectionSource ($sFolderV + $FileName + "_CheckFragmentationIndexes.Txt") ($sFolderV + $FileName + "_CheckFragmentationIndexes.Task") (3600)
+     $CheckCommandTimeout = CheckCommandTimeout $SQLConnectionSource ($sFolderV + $FileName + "_CheckCommandTimeout.Txt") ($sFolderV + $FileName + "_CheckCommandTimeout.Task") (3600)
+     $ExportQueryDataStore = ExportQueryDataStore $SQLConnectionSource $DbsArray[$iDBs] 3600
+     $CheckStatusPerResource = CheckStatusPerResource $SQLConnectionSource ($sFolderV + $FileName + "_ResourceUsage.Txt") (3600)
+     $CheckStatusPerTable = CheckStatusPerTable $SQLConnectionSource ($sFolderV + $FileName + "_TableSize.Txt") (3600)
      Checkwaits $DbsArray[$iDBs] $FileWaitStat
    
      $TotalCheckStatistics=$TotalCheckStatistics+$CheckStatistics
@@ -819,28 +1064,37 @@ else
      $TotalCheckFragmentationIndexes=$TotalCheckFragmentationIndexes+$CheckFragmentationIndexes
      $TotalCheckCommandTimeout=$TotalCheckCommandTimeout+$CheckCommandTimeout
      $TotalCheckWaits=$TotalCheckWaits+$CheckWaits
+     $TotalExportQueryDataStore=$TotalExportQueryDataStore+$ExportQueryDataStore
+     $TotalCheckStatusPerResource = $TotalCheckStatusPerResource + $CheckStatusPerResource
+     $TotalCheckStatusPerTable = $TotalCheckStatusPerTable + $CheckStatusPerTable
      
  
-   logMsg("Closing the connection and summary for " + $DbsArray[$iDBs]) (3)
-   logMsg("Number of Issues with statistics           : " + $CheckStatistics )  (1)
-   logMsg("Number of Issues with statistics/indexes   : " + $CheckIndexesAndStatistics )  (1)
-   logMsg("Number of Issues with Timeouts             : " + $CheckCommandTimeout )  (1)
-   logMsg("Number of Issues with Indexes Fragmentation: " + $CheckFragmentationIndexes )  (1)
-   logMsg("Number of Issues with Scoped Configuration : " + $CheckScopeConfiguration )  (1)
-   logMsg("Number of Issues with Tuning Recomendation : " + $CheckTunningRecomendations )  (1)
-   logMsg("Number of Issues with Missing Indexes      : " + $CheckMissingIndexes )  (1)
+   logMsg("Closing the connection and summary for.....  : " + $DbsArray[$iDBs]) (3)
+   logMsg("Number of Issues with statistics             : " + $CheckStatistics )  (1)
+   logMsg("Number of Issues with statistics/indexes     : " + $CheckIndexesAndStatistics )  (1)
+   logMsg("Number of Issues with Timeouts               : " + $CheckCommandTimeout )  (1)
+   logMsg("Number of Issues with Indexes Fragmentation  : " + $CheckFragmentationIndexes )  (1)
+   logMsg("Number of Issues with Scoped Configuration   : " + $CheckScopeConfiguration )  (1)
+   logMsg("Number of Issues with Tuning Recomendation   : " + $CheckTunningRecomendations )  (1)
+   logMsg("Number of Issues with Missing Indexes        : " + $CheckMissingIndexes )  (1)
+   logMsg("Number of Tables of Query Data Store Exported: " + $ExportQueryDataStore )  (1)
+   logMsg("Number of Resource Usage                     : " + $CheckStatusPerResource )  (1)
+   logMsg("Number of Tables Usage                       : " + $CheckStatusPerTable )  (1)
    
    $SQLConnectionSource.Close() 
  }
  Remove-Variable password
  logMsg("Performance Collector Script was executed correctly")  (3)
- logMsg("Total Number of Issues with statistics           : " + $TotalCheckStatistics )  (1)
- logMsg("Total Number of Issues with statistics/indexes   : " + $TotalCheckIndexesAndStatistics )  (1)
- logMsg("Total Number of Issues with Timeouts             : " + $TotalCheckCommandTimeout )  (1)
- logMsg("Total Number of Issues with Indexes Fragmentation: " + $TotalCheckFragmentationIndexes )  (1)
- logMsg("Total Number of Issues with Scoped Configuration : " + $TotalCheckScopeConfiguration )  (1)
- logMsg("Total Number of Issues with Tuning Recomendation : " + $TotalCheckTunningRecomendations )  (1)
- logMsg("Total Number of Issues with Missing Indexes      : " + $TotalCheckMissingIndexes )  (1)
+ logMsg("Total Number of Issues with statistics             : " + $TotalCheckStatistics )  (1)
+ logMsg("Total Number of Issues with statistics/indexes     : " + $TotalCheckIndexesAndStatistics )  (1)
+ logMsg("Total Number of Issues with Timeouts               : " + $TotalCheckCommandTimeout )  (1)
+ logMsg("Total Number of Issues with Indexes Fragmentation  : " + $TotalCheckFragmentationIndexes )  (1)
+ logMsg("Total Number of Issues with Scoped Configuration   : " + $TotalCheckScopeConfiguration )  (1)
+ logMsg("Total Number of Issues with Tuning Recomendation   : " + $TotalCheckTunningRecomendations )  (1)
+ logMsg("Total Number of Issues with Missing Indexes        : " + $TotalCheckMissingIndexes )  (1)
+ logMsg("Total Number of Tables of Query Data Store Exported: " + $TotalExportQueryDataStore )  (1)
+ logMsg("Total Number of Resource Usage                     : " + $TotalCheckStatusPerResource )  (1)
+ logMsg("Total Number of Tables Usage                       : " + $TotalCheckStatusPerTable )  (1)
 
 }
 catch
