@@ -37,13 +37,13 @@ Basically we need to configure the parameters:
 ## Outcome
 
 - **PerfChecker.Log** = Contains all the issues found.
-- **PerfCheckerWaitStats_dbname.Log** = Contains the information about the wait stats per database.
+- **DbName_PerfCheckerWaitStats.csv** = Contains the information about the wait stats per database.
 - **Every check done will save two files**
-  + Extension .Txt that contains the report of the operation done. 
-  + Extension .task that contains a possible mitigation about the issue found. 
+  + Extension **.Txt** that contains the report of the operation done. 
+  + Extension **.task** that contains a possible mitigation about the issue found. 
   + For the extraction of query data store this PowerShell script will generated two additional files per QDS table:
-    + Extension .bcp with the information exported.
-    + Extension .xml with the structure of this .bcp file.  
+    + Extension **.bcp** with the information exported.
+    + Extension **.xml** with the structure of this .bcp file.  
 
 
 Enjoy!
