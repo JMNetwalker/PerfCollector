@@ -1,6 +1,6 @@
 # PerfCollector
 Performance Collector Checker. This Powershell script has been designed with a main idea check the main topics that could impact in your database performance.
-[Additional Information](https://techcommunity.microsoft.com/t5/azure-database-support-blog/lesson-learned-195-performance-health-self-check-for-azure-sql/ba-p/3277878)
+[Additional Information](https://techcommunity.microsoft.com/t5/azure-database-support-blog/lesson-learned-195-performance-health-self-check-for-azure-sql/ba-p/3277878) In this [Video](https://youtu.be/vg6S4He0rxY) you could find out more information how to use this PowerShell Script.
 
 - **Check if the statistics** 
   + If number of rows in the statistics is different of rows_sampled.
@@ -39,12 +39,11 @@ Basically we need to configure the parameters:
 - **PerfChecker.Log** = Contains all the issues found.
 - **PerfCheckerWaitStats_dbname.Log** = Contains the information about the wait stats per database.
 - **Every check done will save two files**
--- Extension .Txt that contains the report of the operation done. 
--- Extension .task that contains a possible mitigation about the issue found. 
--- For the extraction of query data store this PowerShell script will generated two additional files per QDS table:
---- Extension .bcp with the information exported.
---- Extension .xml with the structure of this .bcp file.  
++ Extension .Txt that contains the report of the operation done. 
++ Extension .task that contains a possible mitigation about the issue found. 
++ For the extraction of query data store this PowerShell script will generated two additional files per QDS table:
+++ Extension .bcp with the information exported.
+++ Extension .xml with the structure of this .bcp file.  
 
-In this video you could find out more information how to use this PowerShell Script https://youtu.be/vg6S4He0rxY
 
 Enjoy!
