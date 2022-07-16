@@ -1,9 +1,9 @@
 ﻿
-param($Folder = "C:\PerfChecker\", #Folder Parameter to save the csv files 
+param($Folder = "", #Folder Parameter to open the files gathered from PerfCollector tool  
       $server = "", #ServerName parameter to connect,for example, myserver.database.windows.net
       $user = "", #UserName parameter  to connect
-      $Db = "",
-      $passwordSecure = "") #Name of the elastic DB Pool if you want to filter only by elastic DB Pool.
+      $Db = "", #Name of the database that this script will save the data imported - Please use a new empty database
+      $passwordSecure = "") #Password to connect to the database.
 
 
 #-----------------------------------------------------------
@@ -23,7 +23,7 @@ else
 }
 
 #--------------------------------
-#Separator
+# Give me a string before the first ocurrence of a separator
 #--------------------------------
 
 function GiveMeSeparator
@@ -51,6 +51,7 @@ Param([Parameter(Mandatory=$true)]
 #-----------------------------------------------------------------------------------------------------------
 #Log the operations
 #-----------------------------------------------------------------------------------------------------------
+
 function logMsg
 {
     Param
@@ -101,6 +102,11 @@ function logMsg
   }
 }
 
+#-----------------------------------------------------------------------------------------------------------
+# Function to connect to the databaase using a Retry-Logic
+#-----------------------------------------------------------------------------------------------------------
+
+
 Function GiveMeConnectionSource()
 { 
   for ($i=1; $i -lt 10; $i++)
@@ -123,7 +129,7 @@ Function GiveMeConnectionSource()
   }
 }
 #-----------------------------------------------------------------------------------------------------------
-# ReadFile_All files
+# ReadFile_All files of the folder.
 #-----------------------------------------------------------------------------------------------------------
 
 function ReadAllFiles
@@ -140,10 +146,10 @@ function ReadAllFiles
 
  Try
  {
-    logMsg -msg "Load list of files" -Color 1
+
     foreach ($f in ((Get-ChildItem -Path $Folder))) 
     {
-      logMsg -msg ("Reading...:" + $f.FullName ) 
+      logMsg -msg ("Starting Checking the file ...:" + $f.FullName ) 
         $File = [string]$f.FullName
         $FileType = GiveFileType($f) 
         $FileName = [string]$f.Name
@@ -157,14 +163,18 @@ function ReadAllFiles
           $AcumulatedTable = $US_PREFIX + $DBName.Remaining.Substring(0,$DBName.Remaining.Length-4)
           ReadFileBCP  -File $File -TypeFile $FileType -DBName $DBName.Text $Guid $f $AcumulatedTable
         }
-      logMsg -msg ("Read...:" + $F.FullName ) 
+      logMsg -msg ("Finished the checking process for the file..:" + $F.FullName ) 
     }
   }
   catch
   {
-   return "Load list of files - Error:..." + $Error[0].Exception 
+   return "Error obtaining the list of the files - Error:..." + $Error[0].Exception 
   } 
 }
+
+#-----------------------------------------------------------------------------------------------------------
+# Give me the file type to work!
+#-----------------------------------------------------------------------------------------------------------
 
 function GiveFileType ($f)
 {
@@ -222,6 +232,10 @@ function GiveFileType ($f)
   Return "99"
 }
 
+#-----------------------------------------------------------------------------------------------------------
+#Read the BCP content of QDS.
+#-----------------------------------------------------------------------------------------------------------
+
 function ReadFileBCP
 {
     Param
@@ -243,6 +257,8 @@ function ReadFileBCP
  Try
  {
 
+  logMsg -msg ("Reading the QDS file ..:" + $File ) 
+
   $SQLConnectionSource = GiveMeConnectionSource 
   if($SQLConnectionSource -eq $null)
    { 
@@ -250,7 +266,7 @@ function ReadFileBCP
      exit;
    }
   
-  $Folder = $f.DirectoryName + "\" 
+  ##$Folder = $f.DirectoryName + "\" 
 
   $QSLoadList = [System.Collections.ArrayList]::new()
   [void]$QSLoadList.Add([QSTable]::new($f.BaseName))
@@ -258,22 +274,29 @@ function ReadFileBCP
   forEach ($item in $QSLoadList) 
   {
     $SqlCommand = "exec [dbo].[GenerateTableFromXMLFormatFile] '" + ( Get-Content -Path ($Folder + $item.xmlFile)) +"','"+ $item.TableName + "',@DropExisting=1"
-    ExecuteQuery $SQLConnectionSource  $SqlCommand
+    $Null = ExecuteQuery $SQLConnectionSource  $SqlCommand
     $Command="BCP " + $item.TableName  + " in " + $Folder + $item.bcpFile + " -f "+ $Folder + $item.xmlFile +" -S " +$server+" -U " + $user + " -P "+$password+" -d "+$Db
-    ExecuteExpression $Command
-    AcumulatedTotal $SQLConnectionSource  $item.TableName $AcumulatedTable  $DBName
+    $Null = ExecuteExpression $Command
+    $Null = AcumulatedTotal $SQLConnectionSource  $item.TableName $AcumulatedTable  $DBName
   }
   
+  logMsg -msg ("Finished the QDS read process for..:" + $File + " sucessfully" ) 
+
  }
  catch
   {
-    logMsg("QDS Script was executed incorrectly ..: " + $Error[0].Exception) (2)
+    logMsg("QDS Script was executed incorrectly for " + $File + "  -  Error: " + $Error[0].Exception) (2)
   }
  finally
  {
    logMsg("QDS Script finished - Check the previous status line to know if it was success or not") (3) 
  }
 } 
+
+#-----------------------------------------------------------------------------------------------------------
+#Execute any query...
+#-----------------------------------------------------------------------------------------------------------
+
 
 function ExecuteQuery($connection,$SqlCommand)
 {
@@ -292,6 +315,10 @@ function ExecuteQuery($connection,$SqlCommand)
   } 
 }
 
+#-----------------------------------------------------------------------------------------------------------
+#Execute any expression
+#-----------------------------------------------------------------------------------------------------------
+
 function ExecuteExpression($Command)
 {
  try
@@ -305,6 +332,10 @@ function ExecuteExpression($Command)
     return $false 
   } 
 }
+
+#-----------------------------------------------------------------------------------------------------------
+# Every time I need to recreate the tables....
+#-----------------------------------------------------------------------------------------------------------
 
 function RecreateTable()
 {
@@ -320,13 +351,15 @@ function RecreateTable()
  try
  {
 
+   logMsg( "Recreating the table " + $TableName ) 
+
    $connection = GiveMeConnectionSource 
    if($connection -eq $null)
     { 
      logMsg("It is not possible to connect to the database") (2)
      exit;
     }
-
+    
    $TableList = [System.Collections.ArrayList]::new()
 
    $commandExecute = New-Object -TypeName System.Data.SqlClient.SqlCommand
@@ -355,21 +388,28 @@ function RecreateTable()
    }
 
   $connection.Close()
+  logMsg( "Disconnected from the database...") 
+  logMsg( "Recreated the table " + $TableName + " - Success") 
   return $true
   }
   catch
    {
+    logMsg( "Recreated the table " + $TableName + " - Error:..." + $Error[0].Exception ) (2)
     return $false
    } 
-
 }
 
-
+#-----------------------------------------------------------------------------------------------------------
+# Delete also the QDS tables...
+#-----------------------------------------------------------------------------------------------------------
 
 function DeleteAllAcumulatedData($US_PREFIX )
 {
  try
  {
+
+ 
+   logMsg( "Recreating QDS accumulated tables ") 
 
    $connection = GiveMeConnectionSource 
    if($connection -eq $null)
@@ -403,14 +443,20 @@ function DeleteAllAcumulatedData($US_PREFIX )
    }
 
   $connection.Close()
+  logMsg( "Finished the process of deletion of accumulated tables") 
   return $true
   }
   catch
    {
+    logMsg( "Creation process of accumulated tables given the following error: " + $Error[0].Exception ) (2)
     return $false
    } 
 
 }
+
+#-----------------------------------------------------------------------------------------------------------
+#Delete the previous table if exits
+#-----------------------------------------------------------------------------------------------------------
 
 function AcumulatedTotal($connection, $TableSource, $TableTarget, $DBName )
 {
@@ -456,7 +502,7 @@ function AcumulatedTotal($connection, $TableSource, $TableTarget, $DBName )
 }
 
 #-----------------------------------------------------------------------------------------------------------
-# ReadFile_All files
+#Read the content of the file....
 #-----------------------------------------------------------------------------------------------------------
 
 function ReadFile
@@ -480,6 +526,8 @@ function ReadFile
 
   $Data = $Rules = [System.Collections.ArrayList]::new() 
 
+  logMsg( "Reading the file content of " + $File ) 
+
   $SQLConnectionSource = GiveMeConnectionSource 
   if($SQLConnectionSource -eq $null)
    { 
@@ -487,12 +535,12 @@ function ReadFile
      exit;
    }
 
-  while (($current_line =$stream_reader.ReadLine()) -ne $null) ##Read the file
+  while (($current_line =$stream_reader.ReadLine()) -ne $null) 
   {
     $line_number++
     If( $line_number % 50 -eq 0 )
     {
-      logMsg -msg ("Searching...- Line Number: " + $line_number.toString("###,####") ) 
+      logMsg -msg ("Reading the line number: " + $line_number.toString("###,####") ) 
     }
 
     If(-not (TestEmpty($current_line)))
@@ -500,6 +548,10 @@ function ReadFile
        $Null = $Data.Add($current_line)
      }
   }
+
+    logMsg( "Read the file content of " + $File ) 
+
+    logMsg( "Analyzing the results of " + $File ) 
 
       If($TypeFile -eq "0") 
       {
@@ -548,12 +600,17 @@ function ReadFile
 
   $stream_reader.Close()
   $SQLConnectionSource.Close()
+  logMsg( "Analyzed the results of " + $File ) 
 }
   catch
   {
-   return "Load list of files - Error:..." + $Error[0].Exception 
+   return "Read Error of " + $File + " - Error:..." + $Error[0].Exception 
   } 
 }
+
+#--------------------------------
+#Review data about missing indexes
+#--------------------------------
 
 function InsertCheckMissingIndexes($Data,$connection,$DBNAme,$Guid)
 {
@@ -598,11 +655,15 @@ function InsertCheckMissingIndexes($Data,$connection,$DBNAme,$Guid)
   }
   catch
    {
-    logMsg("Not able to run Checking recomendations..." + $Error[0].Exception) (2)
+    logMsg("Not able to run Checking missing indexes..." + $Error[0].Exception) (2)
     return $false
    } 
 
 }
+
+#--------------------------------
+#Review data about recomendations
+#--------------------------------
 
 
 function InsertCheckTunningRecomendation($Data,$connection,$DBNAme,$Guid)
@@ -642,6 +703,10 @@ function InsertCheckTunningRecomendation($Data,$connection,$DBNAme,$Guid)
 
 }
 
+#--------------------------------
+#Review data about scope recomendations
+#--------------------------------
+
 
 function InsertCheckRecomendations($Data,$connection,$DBNAme,$Guid)
 {
@@ -674,12 +739,15 @@ function InsertCheckRecomendations($Data,$connection,$DBNAme,$Guid)
   }
   catch
    {
-    logMsg("Not able to run Checking recomendations..." + $Error[0].Exception) (2)
+    logMsg("Not able to run Checking scope configurations..." + $Error[0].Exception) (2)
     return $false
    } 
 
 }
 
+#--------------------------------
+#Review data about command timeouts
+#--------------------------------
 
 
 function InsertCheckCommandTimeouts($Data,$connection,$DBNAme,$Guid)
@@ -738,11 +806,16 @@ function InsertCheckCommandTimeouts($Data,$connection,$DBNAme,$Guid)
   }
   catch
    {
-    logMsg("Not able to run Checking Status per Table..." + $Error[0].Exception) (2)
+    logMsg("Not able to run Checking command timeouts..." + $Error[0].Exception) (2)
     return $false
    } 
 
 }
+
+#--------------------------------
+#Review data space used per table
+#--------------------------------
+
 
 function InsertCheckTableSize($Data,$connection,$DBNAme,$Guid)
 {
@@ -788,11 +861,16 @@ function InsertCheckTableSize($Data,$connection,$DBNAme,$Guid)
   }
   catch
    {
-    logMsg("Not able to run Checking Status per Table..." + $Error[0].Exception) (2)
+    logMsg("Not able to run Checking Space used per Table..." + $Error[0].Exception) (2)
     return $false
    } 
 
 }
+
+#--------------------------------
+#Review data about fragmentation
+#--------------------------------
+
 
 function InsertCheckFragmentation($Data,$connection,$DBNAme,$Guid)
 {
@@ -835,11 +913,16 @@ function InsertCheckFragmentation($Data,$connection,$DBNAme,$Guid)
   }
   catch
    {
-    logMsg("Not able to run Checking Status per Table..." + $Error[0].Exception) (2)
+    logMsg("Not able to run Checking fragmentation..." + $Error[0].Exception) (2)
     return $false
    } 
 
 }
+
+#--------------------------------
+#Review data about statistics
+#--------------------------------
+
 
 function InsertCheckStatistics($Data,$connection,$DBNAme,$Guid)
 {
@@ -881,11 +964,16 @@ function InsertCheckStatistics($Data,$connection,$DBNAme,$Guid)
   }
   catch
    {
-    logMsg("Not able to run Checking Status per Table..." + $Error[0].Exception) (2)
+    logMsg("Not able to run Checking Statistics..." + $Error[0].Exception) (2)
     return $false
    } 
 
 }
+
+#--------------------------------
+#Review data about statistics associated with indexes.
+#--------------------------------
+
 
 function InsertCheckStatisticsIndexes($Data,$connection,$DBNAme,$Guid)
 {
@@ -927,11 +1015,15 @@ function InsertCheckStatisticsIndexes($Data,$connection,$DBNAme,$Guid)
   }
   catch
    {
-    logMsg("Not able to run Checking Status per Table..." + $Error[0].Exception) (2)
+    logMsg("Not able to run Checking indexes and statistics..." + $Error[0].Exception) (2)
     return $false
    } 
 
 }
+
+#--------------------------------
+#Review data about Resources stats
+#--------------------------------
 
 function InsertCheckResource($Data,$connection,$DBNAme,$Guid)
 {
@@ -988,7 +1080,64 @@ function InsertCheckResource($Data,$connection,$DBNAme,$Guid)
   }
   catch
    {
-    logMsg("Not able to run Checking Status per Table..." + $Error[0].Exception) (2)
+    logMsg("Not able to run Checking Resources stats..." + $Error[0].Exception) (2)
+    return $false
+   } 
+
+}
+
+#-----------------------------------------------------------------------------------------------------------
+# Delete and recreate the script that read the XML file
+#-----------------------------------------------------------------------------------------------------------
+
+function DeleteRecreateScriptReadXMLFile()
+{
+ try
+ {
+
+ 
+   logMsg( "Delete and recreate the script that read the XML file") 
+
+   $connection = GiveMeConnectionSource 
+   if($connection -eq $null)
+    { 
+     logMsg("It is not possible to connect to the database") (2)
+     exit;
+    }
+
+   $commandExecute = New-Object -TypeName System.Data.SqlClient.SqlCommand
+   $commandExecute.CommandTimeout = 3600
+   $commandExecute.Connection=$connection
+
+   $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
+   $command.CommandTimeout = 3600
+   $command.Connection=$connection
+   $command.CommandText = "SELECT Name FROM sys.objects where Name = 'GenerateTableFromXMLFormatFile'"
+   $Reader = $command.ExecuteReader(); 
+
+   $bFound = $false
+   $bFound = $Reader.HasRows
+   $Reader.Close()
+
+   If($bFound)
+   {
+     $commandExecute.CommandText = "DROP PROCEDURE [GenerateTableFromXMLFormatFile]" 
+     $Null = $commandExecute.ExecuteNonQuery(); 
+   }
+
+  # UPSERT StoredProcedure in the destination database to create tables from format file
+
+  $commandExecute.CommandText = (Get-Content -path $FileFormatFileSQL -Raw).Replace("\t"," ").Replace("\n"," ").Replace("\r"," ")
+  [void]$commandExecute.ExecuteNonQuery()
+ 
+
+  $connection.Close()
+  logMsg( "Finished the process of deletion and recreation of XML reading process") 
+  return $true
+  }
+  catch
+   {
+    logMsg( "The process of deletion and recreation of XML reading process given the following error: " + $Error[0].Exception ) (2)
     return $false
    } 
 
@@ -1028,6 +1177,49 @@ param([Parameter(Mandatory=$true,
 )
 return [RegEx]::Replace($Name, "[{0}]" -f ([RegEx]::Escape([String][System.IO.Path]::GetInvalidFileNameChars())), '')}
 
+#--------------------------------
+#The Folder Include "\" or not???
+#--------------------------------
+
+function GiveMeFolderName([Parameter(Mandatory)]$FolderSalida)
+{
+  try
+   {
+    $Pos = $FolderSalida.Substring($FolderSalida.Length-1,1)
+    If( $Pos -ne "\" )
+     {return $FolderSalida + "\"}
+    else
+     {return $FolderSalida}
+   }
+  catch
+  {
+    return $FolderSalida
+  }
+}
+
+#-------------------------------
+#File Exists?
+#-------------------------------
+Function FileExist{ 
+  Param( [Parameter(Mandatory)]$FileName ) 
+  try
+   {
+    $FileExists = Test-Path $FileNAme
+    if($FileExists -eq $True)
+    {
+     return $true
+    }
+    return $false
+   }
+  catch
+  {
+   return $false
+  }
+ }
+
+#--------------------------------
+#Main Module
+#--------------------------------
 
 Class ReadDataLine
 {
@@ -1054,12 +1246,26 @@ clear
  try
  {
 
- #--------------------------------
+#--------------------------------
 #Check the parameters.
 #--------------------------------
 
 if (TestEmpty($server)) { $server = read-host -Prompt "Please enter a Server Name" }
+
+if (TestEmpty($server)) 
+   {
+    LogMsg("Please, specify the server name") (2)
+    exit;
+   }
+
 if (TestEmpty($user))  { $user = read-host -Prompt "Please enter a User Name"   }
+
+if (TestEmpty($user)) 
+   {
+    LogMsg("Please, specify the user name") (2)
+    exit;
+   }
+
 if (TestEmpty($passwordSecure))  
     {  
     $passwordSecure = read-host -Prompt "Please enter a password"  -assecurestring  
@@ -1067,25 +1273,57 @@ if (TestEmpty($passwordSecure))
     }
 else
     {$password = $passwordSecure} 
-if (TestEmpty($Db))  { $Db = read-host -Prompt "Please enter a Database Name, type ALL to check all databases"  }
 
-     if(TestEmpty($Folder))
-     {
-        $FileBrowser = New-Object System.Windows.Forms.FolderBrowserDialog -Property 
-        $null = $FileBrowser.Description = "Select a directory"
-        $null = $FileBrowser.ShowNewFolderButton = $false
-        $null = $FileBrowser.SelectedPath = [Environment]::GetFolderPath("Desktop")
-        $Folder = $FileBrowser.SelectedPath 
-        if(TestEmpty($Folder))
-        { 
-         logMsg -msg "Folder was not selected" -Color 2 -bSaveOnFile $false
-         exit;
-        }
-     }
-     
+if (TestEmpty($Db))  { $Db = read-host -Prompt "Please enter a Database Name, to collect all the data. We suggest to use an empty database"  }
+
+if (TestEmpty($DB)) 
+   {
+    LogMsg("Please, specify the DB name") (2)
+    exit;
+   }
+
+#--------------------------------
+#We need a folder to read the files
+#--------------------------------
+
+if(TestEmpty($Folder))
+{
+$FolderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog 
+$null = $FolderBrowser.Description = "Select a directory that contains the files gathered by PerfCollector"
+$null = $FolderBrowser.ShowNewFolderButton = $false
+$null = $FolderBrowser.SelectedPath = [Environment]::GetFolderPath("Desktop")
+
+if( $FolderBrowser.ShowDialog() -ne "OK" )
+ {
+    logMsg -msg "Folder was not selected" -Color 2 
+    exit;
+ }
+
+$Folder = $FolderBrowser.SelectedPath 
+
+ if(TestEmpty($Folder))
+ { 
+    logMsg -msg "Folder was not selected" -Color 2 
+    exit;
+ }
+}
+
+
+$Folder = GiveMeFolderName($Folder) #Using the folder adding at the end \ 
+$FileFormatFileSQL = $Folder + "GenerateTableFromXMLFormatFile.sql"    
+
+
+if( -not (FileExist($FileFormatFileSQL)))
+{
+  logMsg ( $FileFormatFileSQL + " doesn't exist. Cancelling the process") -Color 2 
+  exit;
+}
+
+      
       logMsg -msg "-- Reading all files--" -Color 1
 
          $Null = DeleteAllAcumulatedData $US_PREFIX
+         $Null = DeleteRecreateScriptReadXMLFile
          $Null = RecreateTable  "_TableSize.Txt" "ProcessID VARCHAR(MAX), dbName VARCHAR(MAX), Time VARCHAR(MAX), [Table] VARCHAR(MAX), Rows bigint, Space bigint, Used bigint"
          $Null = RecreateTable  "_ScopeConfiguration.Txt" "ProcessID VARCHAR(MAX), dbName VARCHAR(MAX), Recomendations VARCHAR(MAX)"
          $Null = RecreateTable  "_CheckCommandTimeout.Txt" "ProcessID VARCHAR(MAX), dbName VARCHAR(MAX), Time VARCHAR(MAX), ExecutionType VARCHAR(MAX),ExecutionCount VARCHAR(MAX),TSQL VARCHAR(MAX),ExecutionPlan VARCHAR(MAX)"
@@ -1096,8 +1334,9 @@ if (TestEmpty($Db))  { $Db = read-host -Prompt "Please enter a Database Name, ty
          $Null = RecreateTable  "_CheckMissingIndexes.Txt" "ProcessID VARCHAR(MAX), dbName VARCHAR(MAX), improvement_measure bigint,create_index_statement VARCHAR(MAX),avg_user_impact bigint,Rest varchar(max)" 
          $Null = RecreateTable  "_ResourceUsage.Txt" "ProcessID VARCHAR(MAX), dbName VARCHAR(MAX), Time varchar(max), avg_cpu bigint, avg_Dataio bigint, avg_log bigint,avg_memory bigint, Max_workers bigint" 
          
-         $Guid = [guid]::NewGuid().Guid
+         $Guid = [guid]::NewGuid().Guid #Unique GUID per proccess.
          ReadAllFiles -Folder $Folder $Guid $US_PREFIX
+
       logMsg -msg "-- Process Finished --" -Color 1
  }
  catch
