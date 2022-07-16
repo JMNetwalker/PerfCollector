@@ -59,7 +59,7 @@ function CheckStatistics($connection,$FileName, $FileNameLogSolution , $iTimeOut
      if( $Reader.GetValue(5) -gt $Reader.GetValue(6)) #If number rows is different rows_sampled
      {
        $Item=$Item+1
-       logMsg("Table/statistics: " + $Reader.GetValue(11).ToString() +"."+ $Reader.GetValue(2).ToString() + "/" + $Reader.GetValue(1).ToString() + " possible outdated (Rows_Sampled is less than rows of the table)") (2) $true $FileName 
+       logMsg("Possible outdated (Rows_Sampled is less than rows of the table):".PadRight(100," ") + " of " + ($Reader.GetValue(11).ToString() +"."+ ($Reader.GetValue(2).ToString() + " " + $Reader.GetValue(1).ToString())).PadRight(400," "))  (2) $true $FileName 
        logSolution("UPDATE STATISTICS [" + $Reader.GetValue(11).ToString() +"].["+ $Reader.GetValue(2).ToString() + "]([" + $Reader.GetValue(1).ToString() + "]) WITH FULLSCAN") $FileNameLogSolution
      }
      if( TestEmpty($Reader.GetValue(10))) {}
@@ -68,14 +68,14 @@ function CheckStatistics($connection,$FileName, $FileNameLogSolution , $iTimeOut
       if($Reader.GetValue(10) -gt 15) #if we have more than 15 days since the lastest update.
       {
        $Item=$Item+1
-       logMsg("Table/statistics: " + $Reader.GetValue(11).ToString() +"."+ $Reader.GetValue(2).ToString() + "/" + $Reader.GetValue(1).ToString() + " possible outdated (15 days since the latest update).") (2) $true $FileName 
+       logMsg("Possible outdated (15 days since the latest update):".PadRight(100," ") + " of " + ($Reader.GetValue(11).ToString() +"."+ ($Reader.GetValue(2).ToString() + " " + $Reader.GetValue(1).ToString())).PadRight(400," ")) (2) $true $FileName
        logSolution("UPDATE STATISTICS [" + $Reader.GetValue(11).ToString() +"].["+ $Reader.GetValue(2).ToString() + "]([" + $Reader.GetValue(1).ToString() + "]) WITH FULLSCAN") $FileNameLogSolution
       }
      }
    }
 
    $Reader.Close();
-   logMsg( "---- Checking Statistics health (Finished) ---- " ) (1) $true $FileName 
+   logMsg( "---- Checking Statistics health (Finished) ---- " ) (1) $true -$FileName 
    return $Item
   }
   catch
@@ -247,27 +247,24 @@ function CheckMissingIndexes($connection ,$FileName, $FileNameLogSolution , $iTi
    $command.CommandTimeout = $iTimeOut
    $command.Connection=$connection
    $command.CommandText = "SELECT CONVERT (varchar, getdate(), 126) AS runtime,
-                           mig.index_group_handle, mid.index_handle,
                            CONVERT (decimal (28,1), migs.avg_total_user_cost * migs.avg_user_impact *
                            (migs.user_seeks + migs.user_scans)) AS improvement_measure,
-                           'CREATE INDEX missing_index_' + CONVERT (varchar, mig.index_group_handle) + '_' +
-                           CONVERT (varchar, mid.index_handle) + ' ON ' + mid.statement + '
-                           (' + ISNULL (mid.equality_columns,'')
+                           REPLACE(REPLACE('CREATE INDEX missing_index_' + CONVERT (varchar, mig.index_group_handle) + '_' +
+                           CONVERT (varchar, mid.index_handle) + ' ON ' + LTRIM(RTRIM(REPLACE(REPLACE(REPLACE(mid.statement,CHAR(10), ' '), CHAR(13), ' '),'  ',''))) + 
+                           '(' + ISNULL (mid.equality_columns,'')
                            + CASE WHEN mid.equality_columns IS NOT NULL
                               AND mid.inequality_columns IS NOT NULL
                            THEN ',' ELSE '' END + ISNULL (mid.inequality_columns, '')
                            + ')'
-                           + ISNULL (' INCLUDE (' + mid.included_columns + ')', '') AS create_index_statement,
-                           migs.*,
-                           mid.database_id,
-                           mid.[object_id]
+                           + ISNULL (' INCLUDE (' + mid.included_columns + ')', ''), CHAR(10), ' '), CHAR(13), ' ') AS create_index_statement,
+                           migs.avg_user_impact
                            FROM sys.dm_db_missing_index_groups AS mig
                            INNER JOIN sys.dm_db_missing_index_group_stats AS migs
                            ON migs.group_handle = mig.index_group_handle
                            INNER JOIN sys.dm_db_missing_index_details AS mid
                            ON mig.index_handle = mid.index_handle
                            ORDER BY migs.avg_total_user_cost * migs.avg_user_impact * (migs.user_seeks + migs.user_scans) DESC"
-   $Reader = $command.ExecuteReader(); 
+   $Reader = $command.ExecuteReader()
    $bFound=$false
    $bCol=$false 
    $ColName=""
@@ -280,7 +277,7 @@ function CheckMissingIndexes($connection ,$FileName, $FileNameLogSolution , $iTi
       for ($iColumn=0; $iColumn -lt $Reader.FieldCount; $iColumn++) 
       {
        $bCol=$true 
-       $ColName=$ColName + $Reader.GetName($iColumn).ToString() + " || "
+       $ColName=$ColName + $Reader.GetName($iColumn).ToString().Replace("\t"," ").Replace("\n"," ").Replace("\r"," ").Replace("\r\n","").Trim() + " || "
       }
      }
 
@@ -289,17 +286,17 @@ function CheckMissingIndexes($connection ,$FileName, $FileNameLogSolution , $iTi
     $TmpContent=""
     for ($iColumn=0; $iColumn -lt $Reader.FieldCount; $iColumn++) 
      {
-      $TmpContent= $TmpContent + $Reader.GetValue($iColumn).ToString() + " || "
+      $TmpContent= $TmpContent + $Reader.GetValue($iColumn).ToString().Replace("\t"," ").Replace("\n"," ").Replace("\r"," ").Replace("\r\n","").Trim()  + " || "
      }
      $Content.Add($TmpContent) | Out-null
    }
    if($bFound)
    {
      logMsg( "---- Missing Indexes found ---- " ) (1) $true $FileName
-     logMsg( $ColName ) (1) $true $FileName
+     logMsg( $ColName.Replace("\t","").Replace("\n","").Replace("\r","") ) (1) $true $FileName $false 
      for ($iColumn=0; $iColumn -lt $Content.Count; $iColumn++)  
      {
-      logMsg( $Content[$iColumn]) (1) $true $FileName
+      logMsg( $Content[$iColumn].Replace("\t","").Replace("\n","").Replace("\r","").Replace("\r\n","").Trim() ) (1) $true $FileName $false 
       $Item=$Item+1
      }
    }
@@ -343,8 +340,8 @@ function CheckIndexesAndStatistics($connection, $FileName, $FileNameLogSolution 
      if( $Reader.GetValue(5) -gt $Reader.GetValue(6)) #If number rows is different rows_sampled
      {
        $Item=$Item+1
-       logMsg("Table/Index: " + $Reader.GetValue(11).ToString() +"."+ $Reader.GetValue(2).ToString() + "/" + $Reader.GetValue(1).ToString() + " possible outdated - (Rows_Sampled is less than rows of the table)" ) (2) $true $FileName 
-       logSolution("ALTER INDEX [" + $Reader.GetValue(1).ToString() + "] ON [" + $Reader.GetValue(11).ToString() +"].["+ $Reader.GetValue(2).ToString() + "] REBUILD") $FileNameLogSolution
+      logMsg("Possible outdated - (Rows_Sampled is less than rows of the table):".PadRight(100," ") + " of " + ($Reader.GetValue(11).ToString() +"."+ $Reader.GetValue(2).ToString() + " " + $Reader.GetValue(1).ToString()).PadRight(400," ")) (2) $true $FileName 
+      logSolution("ALTER INDEX [" + $Reader.GetValue(1).ToString() + "] ON [" + $Reader.GetValue(11).ToString() +"].["+ $Reader.GetValue(2).ToString() + "] REBUILD") $FileNameLogSolution
      }
      if( TestEmpty($Reader.GetValue(10))) {}
      else
@@ -352,7 +349,7 @@ function CheckIndexesAndStatistics($connection, $FileName, $FileNameLogSolution 
       if($Reader.GetValue(10) -gt 15)
       {
        $Item=$Item+1
-       logMsg("Table/Index: " + $Reader.GetValue(11).ToString() +"."+ $Reader.GetValue(2).ToString() + "/" + $Reader.GetValue(1).ToString() + " possible outdated - (15 days since the latest update)" ) (2) $true $FileName 
+       logMsg("Possible outdated - (15 days since the latest update):".PadRight(100," ") + " of " + ($Reader.GetValue(11).ToString() +"."+ $Reader.GetValue(2).ToString() + " " + $Reader.GetValue(1).ToString()).PadRight(400," ")) (2) $true $FileName 
        logSolution("ALTER INDEX [" + $Reader.GetValue(1).ToString() + "] ON [" + $Reader.GetValue(11).ToString() +"].["+ $Reader.GetValue(2).ToString() + "] REBUILD") $FileNameLogSolution
       }
      }
@@ -432,6 +429,7 @@ function CheckFragmentationIndexes($connection,$FileName, $FileNameLogSolution ,
 		                   and (alloc_unit_type_desc = 'IN_ROW_DATA' /*avoid LOB_DATA or ROW_OVERFLOW_DATA*/ or alloc_unit_type_desc is null /*for ColumnStore indexes*/)
 		                   and OBJECT_SCHEMA_NAME(idxs.object_id) != 'sys'
 		                   and idxs.is_disabled=0
+                           and not idxs.name is null
 		                   order by ObjectName, IndexName"
    $Reader = $command.ExecuteReader(); 
    while($Reader.Read())
@@ -439,7 +437,8 @@ function CheckFragmentationIndexes($connection,$FileName, $FileNameLogSolution ,
      if( $Reader.GetValue(3) -gt 50) #If fragmentation is greater than 50
      {
        $Item=$Item+1
-       logMsg("Table/Index: " + $Reader.GetValue(1).ToString() +"."+ $Reader.GetValue(2).ToString() + "/" + $Reader.GetValue(3).ToString() + " high fragmentation" ) (2) $true $FileName
+       logMsg(("High Fragmentation: " + $Reader.GetValue(3).ToString()).PadRight(100," ") + " of " + ($Reader.GetValue(0).ToString() + "." + $Reader.GetValue(1).ToString() +" ["+ $Reader.GetValue(2).ToString() + "]").PadRight(400," ") ) (2) $true $FileName
+       logSolution("ALTER INDEX [" + $Reader.GetValue(2).ToString() + "] ON [" + $Reader.GetValue(0).ToString() +"].["+ $Reader.GetValue(1).ToString() + "] REBUILD") $FileNameLogSolution
      }
    }
    $Reader.Close();
