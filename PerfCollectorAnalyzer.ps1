@@ -236,6 +236,12 @@ function GiveFileType ($f)
   {
    Return "3"
   }
+
+  if($f.Name -like ("*_SystemTableSize.Txt*")) 
+  {
+   Return "10"
+  }
+
     
   Return "99"
 }
@@ -606,6 +612,11 @@ function ReadFile
         $Null = InsertCheckResource $Data $SQLConnectionSource $DBName $Guid
       }
 
+      If($TypeFile -eq "10") 
+      {
+        $Null = InsertCheckSystemTableSize $Data $SQLConnectionSource $DBName $Guid
+      }
+
   $stream_reader.Close()
   $SQLConnectionSource.Close()
   logMsg( "Analyzed the results of " + $File ) 
@@ -824,7 +835,6 @@ function InsertCheckCommandTimeouts($Data,$connection,$DBNAme,$Guid)
 #Review data space used per table
 #--------------------------------
 
-
 function InsertCheckTableSize($Data,$connection,$DBNAme,$Guid)
 {
  try
@@ -870,6 +880,60 @@ function InsertCheckTableSize($Data,$connection,$DBNAme,$Guid)
   catch
    {
     logMsg("Not able to run Checking Space used per Table..." + $Error[0].Exception) (2)
+    return $false
+   } 
+
+}
+
+#--------------------------------
+#Review data space used per table
+#--------------------------------
+
+function InsertCheckSystemTableSize($Data,$connection,$DBNAme,$Guid)
+{
+ try
+ {
+
+   $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
+   $command.CommandTimeout = 3600
+   $command.Connection=$connection
+   $command.CommandText = "INSERT INTO [_SystemTableSize.Txt] (ProcessID,DbName,Time, [Table], Rows, Space, Used) VALUES(@Guid, @dbName,@Time, @Table,@Rows,@Space, @Used)"
+   $Null= $command.Parameters.Add("@Guid", [Data.SQLDBType]::VarChar)      
+   $Null= $command.Parameters.Add("@DBName", [Data.SQLDBType]::VarChar) 
+   $Null= $command.Parameters.Add("@Time", [Data.SQLDBType]::VarChar)           
+   $Null= $command.Parameters.Add("@Table", [Data.SQLDBType]::VarChar)   
+   $Null= $command.Parameters.Add("@Rows", [Data.SQLDBType]::bigint)
+   $Null= $command.Parameters.Add("@Space", [Data.SQLDBType]::bigint)
+   $Null= $command.Parameters.Add("@Used", [Data.SQLDBType]::bigint)
+   
+   for($i=0;$i -le $Data.Count; $i++)
+   {
+     if($Data[$i]  -like "*---- Checking Status per System Table ----*")
+       {
+        $lStart=$i
+        $Time = $Data[$i]
+       }
+     else
+     {
+        If(-not (TestEmpty($Data[$i])) -and $i -gt 2)
+        {
+         $Null = $command.Parameters["@Guid"].Value = $Guid
+         $Null = $command.Parameters["@DBName"].Value = $DbName
+         $Null = $command.Parameters["@Time"].Value = [string]$Time.substring(0,19)
+         $Null = $command.Parameters["@Table"].Value = $Data[$i].substring(0,100)
+         $Null = $command.Parameters["@Rows"].Value = [long]$Data[$i].substring(101,20).Replace(".","")
+         $Null = $command.Parameters["@Space"].Value = [long]$Data[$i].substring(122,20).Replace(".","")
+         $Null = $command.Parameters["@Used"].Value=[long]$Data[$i].substring(142,20).Replace(".","")
+         $Null = $command.ExecuteNonQuery()
+        } 
+      }
+   }    
+  
+   return $true
+  }
+  catch
+   {
+    logMsg("Not able to run Checking Space used per System Table..." + $Error[0].Exception) (2)
     return $false
    } 
 
@@ -1333,6 +1397,7 @@ if( -not (FileExist($FileFormatFileSQL)))
          $Null = DeleteAllAcumulatedData $US_PREFIX
          $Null = DeleteRecreateScriptReadXMLFile
          $Null = RecreateTable  "_TableSize.Txt" "ProcessID VARCHAR(MAX), dbName VARCHAR(MAX), Time VARCHAR(MAX), [Table] VARCHAR(MAX), Rows bigint, Space bigint, Used bigint"
+         $Null = RecreateTable  "_SystemTableSize.Txt" "ProcessID VARCHAR(MAX), dbName VARCHAR(MAX), Time VARCHAR(MAX), [Table] VARCHAR(MAX), Rows bigint, Space bigint, Used bigint"
          $Null = RecreateTable  "_ScopeConfiguration.Txt" "ProcessID VARCHAR(MAX), dbName VARCHAR(MAX), Recomendations VARCHAR(MAX)"
          $Null = RecreateTable  "_CheckCommandTimeout.Txt" "ProcessID VARCHAR(MAX), dbName VARCHAR(MAX), Time VARCHAR(MAX), ExecutionType VARCHAR(MAX),ExecutionCount VARCHAR(MAX),TSQL VARCHAR(MAX),ExecutionPlan VARCHAR(MAX)"
          $Null = RecreateTable  "_CheckFragmentationIndexes.Txt" "ProcessID VARCHAR(MAX), dbName VARCHAR(MAX), Time VARCHAR(MAX), [Index] VARCHAR(MAX), [Fragmentation] bigint"

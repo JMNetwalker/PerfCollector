@@ -17,6 +17,7 @@
 #    9) Export all the results of Query Data Store to .bcp and .xml to be able to import in a consolidate database. It is very useful when you have multiple databases in Azure SQL Managed Instance or Elastic Database Pool. 
 #   10) Obtain resource usage per database.
 #   11) Total amount of space and rows per table.
+#   12) Total amount of space and rows per system table (QDS/PVS, etc..)
 # Outcomes: 
 #    In the folder specified in $Folder variable we are going to have a file called PerfChecker.Log that contains all the operations done 
 #    and issues found. Also, we are going to have a file per database and check done with the results gathered.
@@ -204,7 +205,7 @@ function CheckCommandTimeout($connection,$FileName, $FileNameLogSolution , $iTim
                            JOIN sys.query_store_query_text AS qst on qsq.query_text_id=qst.query_text_id
                            OUTER APPLY (SELECT TRY_CONVERT(XML, qsp.query_plan) AS query_plan_xml) AS qpx
                            JOIN sys.query_store_runtime_stats qrs on qsp.plan_id = qrs.plan_id
-                           WHERE qrs.execution_type =3
+                           WHERE qrs.execution_type in (3,4)
                            ORDER BY qrs.last_execution_time DESC;"
       
    $Reader = $command.ExecuteReader(); 
@@ -818,6 +819,65 @@ function CheckStatusPerTable($connection ,$FileName, $iTimeOut)
 }
 
 #-------------------------------------------------------------------------------
+# Check the rows, space used, allocated and numbers of system tables
+#-------------------------------------------------------------------------------
+function CheckStatusPerSystemTable($connection ,$FileName, $iTimeOut)
+{
+ try
+ {
+   logMsg( "---- Checking Status per System Table ---- " ) (1) $true $FileName 
+   $Item=0
+
+   $command = New-Object -TypeName System.Data.SqlClient.SqlCommand
+   $command.CommandTimeout = $iTimeOut
+   $command.Connection=$connection
+   $command.CommandText = "SELECT s.Name  + '.' + t.NAME AS TableName,
+                           p.rows,
+                           SUM(a.total_pages) / 128.00 AS TotalSpaceMB,
+                           SUM(a.used_pages) / 128.00 AS UsedSpaceMB,
+                           SUM(a.total_pages - a.used_pages) / 128.00 AS UnusedSpaceKB
+                           FROM sys.schemas s
+                           INNER JOIN sys.objects t ON t.schema_id = s.schema_id
+                           INNER JOIN sys.indexes i ON t.OBJECT_ID = i.object_id
+                           INNER JOIN sys.partitions p ON i.object_id = p.OBJECT_ID AND i.index_id = p.index_id
+                           INNER JOIN sys.allocation_units a ON p.partition_id = a.container_id
+                           WHERE t.is_ms_shipped = 1
+                           GROUP BY s.Name  + '.' + t.NAME, p.Rows
+						   ORDER BY p.Rows desc"
+  $Reader = $command.ExecuteReader(); 
+  $StringReport = "Table                                                                                               "
+  $StringReport = $StringReport + "Rows                        "                   
+  $StringReport = $StringReport + "Space                       "                  
+  $StringReport = $StringReport + "Used                        "                   
+  logMsg($StringReport) (1) $true $FileName -bShowDate $false
+  
+  while($Reader.Read())
+   {
+    $Item=$Item+1
+    $lTotalRows = $Reader.GetValue(1)
+    $lTotalSpace = $Reader.GetValue(2)
+    $lTotalUsed = $Reader.GetValue(3)
+    $lTotalUnUsed = $Reader.GetValue(4)
+    $StringReport = $Reader.GetValue(0).ToString().PadRight(100).Substring(0,99) + " "
+    $StringReport = $StringReport + $lTotalRows.ToString('N0').PadLeft(20) + " " 
+    $StringReport = $StringReport + $lTotalSpace.ToString('N0').PadLeft(20)  + " "
+    $StringReport = $StringReport + $lTotalUsed.ToString('N0').PadLeft(20)  
+    logMsg($StringReport) (1) $true $FileName -bShowDate $false
+   }
+
+   $Reader.Close();
+   return $Item
+  }
+  catch
+   {
+    $Reader.Close();
+    logMsg("Not able to run Checking Status per System Table..." + $Error[0].Exception) (2)
+    return 0
+   } 
+
+}
+
+#-------------------------------------------------------------------------------
 # Show the performance counters of the database
 #-------------------------------------------------------------------------------
 
@@ -933,6 +993,7 @@ $DbsArray = [System.Collections.ArrayList]::new()
  $TotalExportQueryDataStore=0
  $TotalCheckStatusPerResource=0
  $TotalCheckStatusPerTable=0
+ $TotalCheckStatusPerSystemTable=0
 
 #--------------------------------
 #Run the process
@@ -1038,6 +1099,7 @@ else
      $ExportQueryDataStore=0
      $CheckStatusPerResource=0
      $CheckStatusPerTable=0
+     $CheckStatusPerSystemTable=0
 
      $FileName=Remove-InvalidFileNameChars($DbsArray[$iDBs])
      $FileWaitStat = $sFolderV + $FileName + "_PerfCheckerWaitStats.csv" 
@@ -1053,6 +1115,7 @@ else
      $ExportQueryDataStore = ExportQueryDataStore $SQLConnectionSource $DbsArray[$iDBs] 3600
      $CheckStatusPerResource = CheckStatusPerResource $SQLConnectionSource ($sFolderV + $FileName + "_ResourceUsage.Txt") (3600)
      $CheckStatusPerTable = CheckStatusPerTable $SQLConnectionSource ($sFolderV + $FileName + "_TableSize.Txt") (3600)
+     $CheckStatusPerSystemTable = CheckStatusPerSystemTable $SQLConnectionSource ($sFolderV + $FileName + "_SystemTableSize.Txt") (3600)
      Checkwaits $DbsArray[$iDBs] $FileWaitStat
    
      $TotalCheckStatistics=$TotalCheckStatistics+$CheckStatistics
@@ -1066,6 +1129,7 @@ else
      $TotalExportQueryDataStore=$TotalExportQueryDataStore+$ExportQueryDataStore
      $TotalCheckStatusPerResource = $TotalCheckStatusPerResource + $CheckStatusPerResource
      $TotalCheckStatusPerTable = $TotalCheckStatusPerTable + $CheckStatusPerTable
+     $TotalCheckStatusPerSystemTable = $TotalCheckStatusPerSystemTable +$CheckStatusPerSystemTable
      
  
    logMsg("Closing the connection and summary for.....  : " + $DbsArray[$iDBs]) (3)
@@ -1079,6 +1143,7 @@ else
    logMsg("Number of Tables of Query Data Store Exported: " + $ExportQueryDataStore )  (1)
    logMsg("Number of Resource Usage                     : " + $CheckStatusPerResource )  (1)
    logMsg("Number of Tables Usage                       : " + $CheckStatusPerTable )  (1)
+   logMsg("Number of System Tables Usage                : " + $CheckStatusPerSystemTable )  (1)
    
    $SQLConnectionSource.Close() 
  }
@@ -1094,6 +1159,7 @@ else
  logMsg("Total Number of Tables of Query Data Store Exported: " + $TotalExportQueryDataStore )  (1)
  logMsg("Total Number of Resource Usage                     : " + $TotalCheckStatusPerResource )  (1)
  logMsg("Total Number of Tables Usage                       : " + $TotalCheckStatusPerTable )  (1)
+ logMsg("Total Number of System Tables Usage                : " + $TotalCheckStatusPerSystemTable )  (1)
 
 }
 catch
