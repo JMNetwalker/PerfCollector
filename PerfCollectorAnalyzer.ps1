@@ -288,6 +288,7 @@ function ReadFileBCP
   forEach ($item in $QSLoadList) 
   {
     $SqlCommand = "exec [dbo].[GenerateTableFromXMLFormatFile] '" + ( Get-Content -Path ($Folder + $item.xmlFile)) +"','"+ $item.TableName + "',@DropExisting=1"
+    logMsg -msg ("Inserting the data from QDS file ..:" + $File ) 
     $Null = ExecuteQuery $SQLConnectionSource  $SqlCommand
     $Command="BCP " + $item.TableName  + " in " + $Folder + $item.bcpFile + " -f "+ $Folder + $item.xmlFile +" -S " +$server+" -U " + $user + " -P "+$password+" -d "+$Db
     $Null = ExecuteExpression $Command
@@ -325,6 +326,7 @@ function ExecuteQuery($connection,$SqlCommand)
  }
   catch
   {
+    logMsg("Executing " + $SqlCommand + " -  Error: " + $Error[0].Exception) (3) 
     return $false 
   } 
 }
@@ -504,12 +506,16 @@ function AcumulatedTotal($connection, $TableSource, $TableTarget, $DBName )
      $commandExecute.CommandText = "INSERT INTO [" + $TableTarget + "] SELECT '" + $dbName + "' as DBName,* FROM [" + $TableSource + "]"
    }
 
+   logMsg( "Inserting the data in a temporal table - " + $TableSource) 
    $Null = $commandExecute.ExecuteNonQuery(); 
+   logMsg( "Inserting the data in an acumulated  table - " + $TableTarget) 
    $Null = $commandDelete.ExecuteNonQuery(); 
+   logMsg( "Finished the process moving data from " + $TableSource + " to " + $TableTarget) 
   return $true
   }
   catch
    {
+    logMsg( "Error moving moving data from " + $TableSource + " to " + $TableTarget + " Error: " + $Error[0].Exception) 
     return $false
    } 
 
